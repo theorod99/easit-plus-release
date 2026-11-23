@@ -2,7 +2,7 @@
 // @name Easit+
 // @namespace https://github.com/theorod99/easit-plus-release
 // @description Lokala förbättringar för Easit GO
-// @version 2.1.1
+// @version 2.1.2
 // @match https://sjalvservice-it.norrkoping.se/*
 // @run-at document-start
 // @inject-into page
@@ -22,8 +22,13 @@
 'use strict';
 
 const VERSION = GM_info.script.version;
+const LOCAL_EDITOR_EDIT = Symbol.for('easitPlus.localEditorEdit');
 
 const RELEASES = [
+  {version:'2.1.2', date:'2026-11-23', changes:[
+    'Återställ text fungerar nu även i fältet Lösning.',
+    'Uppdaterad designen på återställknappen.'
+  ]},
   {version:'2.1.0', date:'2026-11-20', changes:[
     'Du kan återställa text som Easit tömmer i fältet Åtgärder.',
     'Klockan i uppdateringsnotisen öppnar ändringsloggen.'
@@ -133,9 +138,10 @@ const STYLES_CSS = `[data-easit-plus-menu-closed] { display: none !important; }
 .easit-plus-group-switch[aria-checked="true"] .easit-plus-switch-track {background:var(--easit-plus-ui-accent);}
 .easit-plus-group-switch[aria-checked="true"] .easit-plus-switch-track::after {transform:translateX(13px);}
 .easit-plus-status-tabs {display:flex; flex-wrap:wrap; gap:4px; min-width:0; max-width:100%;}
-.easit-plus-toolbar .easit-plus-status-tab {padding:6px 10px; border:1px solid transparent; border-radius:var(--easit-plus-ui-control-radius); background:transparent; color:inherit; font:inherit;}
-.easit-plus-toolbar .easit-plus-status-tab:hover {background:var(--easit-plus-ui-hover);}
-.easit-plus-toolbar .easit-plus-status-tab[aria-selected="true"] {background:var(--easit-plus-ui-selected); border-color:var(--easit-plus-ui-control-border); color:var(--easit-plus-ui-accent-text); font-weight:600;}
+.easit-plus-toolbar .easit-plus-status-tab,.easit-plus-field-undo {padding:6px 10px; border:1px solid transparent; border-radius:var(--easit-plus-ui-control-radius);}
+.easit-plus-toolbar .easit-plus-status-tab {background:transparent; color:inherit; font:inherit;}
+.easit-plus-toolbar .easit-plus-status-tab:hover,.easit-plus-field-undo:hover {background:var(--easit-plus-ui-hover);}
+.easit-plus-toolbar .easit-plus-status-tab[aria-selected="true"],.easit-plus-field-undo {background:var(--easit-plus-ui-selected); border-color:var(--easit-plus-ui-control-border); color:var(--easit-plus-ui-accent-text); font-weight:600;}
 
 .easit-plus-loading-toast {position:fixed; right:31.25px; bottom:31.25px; z-index:2147483647; display:grid; grid-template-columns:25px minmax(0,1fr) 25px 20.3125px; grid-template-rows:1fr; align-items:center; gap:7.8125px; pointer-events:auto;}
 .easit-plus-loading-title {position:absolute; width:1.5625px; height:1.5625px; margin:-1.5625px; padding:0; overflow:hidden; clip-path:inset(50%); white-space:nowrap; border:0;}
@@ -257,15 +263,14 @@ select[data-easit-plus-assignee-native] {position:absolute!important; width:1px!
 .easit-plus-handlers .easit-plus-handler-card {gap:7px;}
 .easit-plus-assignee-count {font-variant-numeric:tabular-nums;}
 .easit-plus-mail-action {padding-right:5px;}
-[testid="component-Åtgärder"] :has(> .easit-plus-actions-undo) {position:relative;}
-.easit-plus-actions-undo {
-  position:absolute; right:8px; bottom:9px; z-index:1; display:grid; place-items:center;
-  box-sizing:border-box; width:28px; height:28px; padding:0; cursor:pointer;
-  border:1px solid var(--easit-plus-ui-control-border); border-radius:var(--easit-plus-ui-control-radius);
-  background:var(--easit-plus-ui-surface); color:var(--easit-plus-ui-accent-text);
+:is([testid="component-Åtgärder"], [testid="component-Lösning"]) :has(> .easit-plus-field-undo) {position:relative;}
+.easit-plus-field-undo {
+  position:absolute; left:8px; bottom:9px; z-index:1; display:inline-flex; align-items:center; gap:6px;
+  box-sizing:border-box; min-height:26px; cursor:pointer;
+  font-family:inherit; font-size:12px; line-height:1.2;
+  transition:background-color var(--easit-plus-ui-fast) ease;
 }
-.easit-plus-actions-undo:hover {background:var(--easit-plus-ui-hover);}
-.easit-plus-actions-undo:focus-visible {outline:2px solid var(--easit-plus-ui-accent); outline-offset:1px;}
+.easit-plus-field-undo:focus-visible {outline:2px solid var(--easit-plus-ui-accent); outline-offset:2px;}
 @media (forced-colors:active) {
  .easit-plus-status-tabs button[aria-selected=true],.easit-plus-emoji-choices button[aria-pressed=true] {outline:1px solid Highlight;}
 }
@@ -652,7 +657,7 @@ const POPUP_HTML = `<!doctype html>
         <label class="toggle"><span>Dispatcherstöd för 1st line<small>Visar köantal och föreslår handläggare utifrån senast avlästa kö.</small></span><input id="firstLineWorkloadEnabled" type="checkbox"></label>
         <label class="toggle"><span>Automatisk olästhantering<small>Avmarkerar Oläst e-post vid Skicka och visar knappen Stäng och markera som läst.</small></span><input id="mailUnreadEnabled" type="checkbox"></label>
         <label class="toggle">
-          <span><span id="actionsUndoLabel">Återställ text i Åtgärder</span><small id="actionsUndoHelp">Skapar en knapp för att återställa text som Easit tömmer i fältet Åtgärder.</small></span>
+          <span><span id="actionsUndoLabel">Återställ text i Åtgärder och Lösning</span><small id="actionsUndoHelp">Visar en knapp när Easit tömmer Åtgärder eller ändrar texten i Lösning.</small></span>
           <input id="actionsUndoEnabled" type="checkbox" aria-labelledby="actionsUndoLabel" aria-describedby="actionsUndoHelp">
         </label>
       </section>
@@ -769,7 +774,7 @@ const PAGE_MODULES = [
   initIcon,
   initHeaderPopup,
   initMailActions,
-  initActionsUndo,
+  initFieldUndo,
   initSnippets,
   initSnippetUi,
   initSnippetExpander
@@ -3973,15 +3978,18 @@ function initMailActions({window, document, globalThis, Element, HTMLInputElemen
   observe();schedule();globalThis.EasitPlusMailActions={refresh:schedule};
 }
 
-function initActionsUndo({window, document, location, globalThis, Element, MutationObserver}) {
-  const FIELD = '[testid="component-Åtgärder"]';
+function initFieldUndo({window, document, location, globalThis, Element, MutationObserver}) {
+  const SOLUTION = '[testid="component-Lösning"]';
+  const FIELD = '[testid="component-Åtgärder"], ' + SOLUTION;
+  const DISABLED = ':disabled, [aria-disabled="true"]';
   const settings = globalThis.EasitPlusSettings;
   const states = new Map();
   let enabled = false, timer, url = location.href;
 
   function editors(field) {
     const [editor, history] = field.querySelectorAll('textarea');
-    if (editor && !editor.readOnly && history?.readOnly) return {editor, history};
+    if (!editor || editor.readOnly || editor.getAttribute('aria-readonly') === 'true') return null;
+    if (field.matches(SOLUTION) ? !history : history?.readOnly) return {editor, history};
     return null;
   }
   function scope(field) {
@@ -3991,41 +3999,52 @@ function initActionsUndo({window, document, location, globalThis, Element, Mutat
     state.draft = '';
     state.button?.remove();
   }
+  function canRestore(state, editor) {
+    return Boolean(state.draft && editor.value !== state.draft &&
+      (!state.history || !editor.value) && !editor.matches(DISABLED));
+  }
   function restore(state) {
-    if (!enabled || location.href !== url || !state.field.isConnected || !state.draft) return;
+    if (!enabled || location.href !== url || !state.field.isConnected) return;
     const target = editors(state.field)?.editor;
-    if (!target || target !== state.editor || target.value || target.matches(':disabled, [aria-disabled="true"]')) return;
+    if (!target || target !== state.editor || !canRestore(state, target)) return;
+    const replaced = target.value;
     target.focus();
-    if (document.activeElement !== target || !target.isConnected || target.value || editors(state.field)?.editor !== target) return;
+    if (document.activeElement !== target || !target.isConnected || target.value !== replaced ||
+      editors(state.field)?.editor !== target || !canRestore(state, target)) return;
     const draft = state.draft;
-    target.setRangeText(draft, 0, 0, 'end');
+    target.setRangeText(draft, 0, replaced.length, 'end');
     target.dispatchEvent(new window.InputEvent('input', {bubbles:true, inputType:'insertReplacementText', data:draft}));
     update(state);
   }
   function addButton(state) {
     const button = document.createElement('button');
     button.type = 'button';
-    button.className = 'easit-plus-actions-undo';
-    button.title = 'Återställ text i Åtgärder';
+    button.className = 'easit-plus-field-undo';
+    button.title = state.field.matches(SOLUTION) ? 'Återställ text i Lösning' : 'Återställ text i Åtgärder';
     button.setAttribute('aria-label', button.title);
     button.setAttribute('data-easit-plus-local-ui', '');
-    button.append(strokeIcon(document, 'M9 14 4 9l5-5M4 9h10a6 6 0 0 1 0 12h-3'));
+    button.append('Återställ', strokeIcon(document, 'M9 14 4 9l5-5M4 9h10a6 6 0 0 1 0 12h-3', '14'));
     button.addEventListener('click', event => {event.stopPropagation(); restore(state);});
     return button;
   }
   function update(state, userEdit = false) {
     const {editor, history} = state;
-    if (editor.value) {
-      if (userEdit || editor.value !== state.draft) state.historyValue = history.value;
+    // In Lösning, keep the previous text through successive updates from Easit.
+    if (userEdit || !state.draft || (history && editor.value)) {
+      if (userEdit || editor.value !== state.draft) state.historyValue = history?.value;
       state.draft = editor.value;
-      state.button?.remove();
-    } else if (userEdit || (history.value !== state.historyValue && state.draft.trim() &&
-      history.value.includes(state.draft.trim()))) {
+    } else if (history && history.value !== state.historyValue && state.draft.trim() &&
+      history.value.includes(state.draft.trim())) {
       // A successful save can also empty the field. The draft is now in the log.
       discard(state);
-    } else if (state.draft && !editor.matches(':disabled, [aria-disabled="true"]')) {
+    }
+    if (canRestore(state, editor)) {
       state.button ??= addButton(state);
-      if (editor.nextSibling !== state.button) editor.after(state.button);
+      if (editor.nextSibling !== state.button) {
+        const label = state.field.querySelector('.easit-label') || editor;
+        state.button.style.fontFamily = window.getComputedStyle(label).fontFamily;
+        editor.after(state.button);
+      }
     } else {
       state.button?.remove();
     }
@@ -4069,8 +4088,9 @@ function initActionsUndo({window, document, location, globalThis, Element, Mutat
         const owner = scope(field);
         // A ZK redraw may replace the entire field. Reuse a draft only when
         // the widget ID and its still-mounted form both match.
-        state = field.id && detached.find(old => old.field.id === field.id && old.owner === owner);
-        state ||= {owner, draft:'', historyValue:controls.history.value};
+        state = field.id && detached.find(old => old.field.id === field.id && old.owner === owner &&
+          old.field.getAttribute('testid') === field.getAttribute('testid'));
+        state ||= {owner, draft:'', historyValue:controls.history?.value};
         state.field = field;
         states.set(field, state);
       }
@@ -4091,7 +4111,7 @@ function initActionsUndo({window, document, location, globalThis, Element, Mutat
     if (state?.editor !== event.target || location.href !== url) syncFields();
     const current = states.get(field);
     if (current?.editor !== event.target) return;
-    update(current, event.isTrusted);
+    update(current, event.isTrusted || event[LOCAL_EDITOR_EDIT]);
     checkDrafts();
   }, true);
   function applySetting() {
@@ -4099,7 +4119,7 @@ function initActionsUndo({window, document, location, globalThis, Element, Mutat
     if (next === enabled) return;
     enabled = next;
     if (enabled) {
-      observer.observe(document, {subtree:true, childList:true, attributes:true, attributeFilter:['disabled','readonly','aria-disabled']});
+      observer.observe(document, {subtree:true, childList:true, attributes:true, attributeFilter:['disabled','readonly','aria-disabled','aria-readonly']});
       syncFields();
     } else {
       observer.disconnect();
@@ -4461,7 +4481,9 @@ function initSnippetExpander({document, globalThis, Node}) {
         editor.focus();if(!valid(context))return false;editor.setSelectionRange(start, end);
         if (!editor.ownerDocument.execCommand('insertText', false, text)) {
           editor.setRangeText(text, start, end, 'end');
-          editor.dispatchEvent(new InputEvent('input', {bubbles: true, inputType: 'insertReplacementText', data: text}));
+          const event = new InputEvent('input', {bubbles: true, inputType: 'insertReplacementText', data: text});
+          event[LOCAL_EDITOR_EDIT] = true;
+          editor.dispatchEvent(event);
         }
         editor.scrollTop = scrollTop;
         return true;
