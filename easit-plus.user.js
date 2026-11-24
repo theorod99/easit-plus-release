@@ -2,7 +2,7 @@
 // @name Easit+
 // @namespace https://github.com/theorod99/easit-plus-release
 // @description Lokala förbättringar för Easit GO
-// @version 2.1.2
+// @version 2.2.0
 // @match https://sjalvservice-it.norrkoping.se/*
 // @run-at document-start
 // @inject-into page
@@ -25,6 +25,9 @@ const VERSION = GM_info.script.version;
 const LOCAL_EDITOR_EDIT = Symbol.for('easitPlus.localEditorEdit');
 
 const RELEASES = [
+  {version:'2.2.0', date:'2026-11-24', changes:[
+    'Öppna arbetsytor i egna flikar på samma sida med det nya valet Öppna i ny flik. Du kan slå på eller av funktionen i inställningarna.'
+  ]},
   {version:'2.1.2', date:'2026-11-23', changes:[
     'Återställ text fungerar nu även i fältet Lösning.',
     'Uppdaterad designen på återställknappen.'
@@ -70,7 +73,81 @@ const UI_CSS = `/* Shared appearance for Easit+ UI. These variables never style 
 }
 `;
 
+const TICKET_TOP = 'div.z-div:is(.topContainer,#topContainer,[testid="topContainer"],[data-testid="topContainer"])';
+const TICKET_BOTTOM = 'div.z-div:is(.bottomContainer,#bottomContainer,[testid="bottomContainer"],[data-testid="bottomContainer"])';
+const TICKET_TAB_OPEN = 'easit-plus-ticket-tab-open';
+const TICKET_POPUP_OPEN = 'easit-plus-ticket-popup-open';
+const TICKET_TAB_TEXT = 'Öppna i ny flik';
+const TICKET_VIEW = '[testid="ivw-view-path"]';
+const TICKET_FORM = '.easit-item-form';
+const TAB_SIDEBAR_ROW = '.menu-left .menu-content-row:is(.subgroup-item, [testid^="mc-static-"])';
+const TAB_ADD_BUTTON = '[testid="mc-toolbar-add-btn"]';
+const TAB_INFO_BUTTON = 'button.mini-button-os:is([aria-label="Visa information" i], [aria-label$=" Visa information" i])';
+const TAB_WORKSPACE_ITEM = '[testid="pivl-open-item-in-new-workspace"]';
+const TICKET_FRAME_CSS = `
+:root[data-easit-plus-ticket-frame] ${TICKET_TOP},
+:root[data-easit-plus-ticket-frame] :is(.menuComponent, .menu-left, .search-container):not(:has(:is(${TICKET_BOTTOM}, ${TICKET_FORM}, ${TICKET_VIEW}))),
+:root[data-easit-plus-ticket-frame] [data-easit-plus-tab-sidebar],
+:root[data-easit-plus-tab-workspace] ${TICKET_TOP}:not([data-easit-plus-tab-toolbar]) {
+  display:none !important;
+}
+:root[data-easit-plus-ticket-frame] ${TICKET_BOTTOM},
+:root[data-easit-plus-ticket-frame] [data-easit-plus-tab-content] {
+  inline-size:100% !important; max-inline-size:100% !important; min-inline-size:0 !important;
+  margin-inline:0 !important; padding-inline-start:0 !important; inset-inline:0 !important;
+  flex:1 1 auto !important; grid-column:1 / -1 !important;
+}
+`;
+const TICKET_BAR_CSS = `
+.easit-plus-ticket-tabs {
+  position:fixed; z-index:2147483001; box-sizing:border-box; top:0; left:0; width:100%;
+  display:flex; align-items:stretch; gap:6px; min-width:0;
+  overflow-x:auto; padding:5px 8px; border-bottom:1px solid var(--easit-plus-ui-border);
+  background:var(--easit-plus-ui-canvas); color:var(--easit-plus-ui-text); font:12px/1.4 Roboto,sans-serif;
+}
+.easit-plus-ticket-tab-space {flex:0 0 auto; align-self:stretch; width:100%; height:32px; pointer-events:none;}
+.easit-plus-ticket-tabs[hidden], .easit-plus-ticket-panels[hidden], .easit-plus-ticket-panel[hidden] {display:none;}
+.easit-plus-ticket-tab {
+  display:flex; align-items:stretch; flex:0 0 auto; max-width:min(260px,75vw); min-width:0;
+  border-radius:6px; overflow:hidden;
+}
+.easit-plus-ticket-tab:has([aria-selected="true"]) {
+  background:var(--easit-plus-ui-selected); color:var(--easit-plus-ui-accent-text);
+}
+.easit-plus-ticket-tab button {border:0; background:transparent; color:inherit; font:inherit; cursor:pointer;}
+.easit-plus-ticket-tab button:hover {background:color-mix(in srgb, currentColor 9%, transparent);}
+.easit-plus-ticket-tab button:focus-visible {outline:2px solid var(--easit-plus-ui-accent); outline-offset:-2px;}
+.easit-plus-ticket-tab [role="tab"] {padding:6px 10px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
+.easit-plus-ticket-tab [aria-selected="true"] {font-weight:600;}
+.easit-plus-ticket-tab [data-close-ticket-tab] {flex:0 0 26px; padding:0; font-size:16px;}
+.easit-plus-ticket-tab [draggable="true"]:active {cursor:grabbing;}
+.easit-plus-ticket-tab[data-easit-plus-tab-dragging] {opacity:.55;}
+.easit-plus-ticket-tab[data-easit-plus-tab-drop="before"] {box-shadow:-2px 0 var(--easit-plus-ui-accent);}
+.easit-plus-ticket-tab[data-easit-plus-tab-drop="after"] {box-shadow:2px 0 var(--easit-plus-ui-accent);}
+`;
 const STYLES_CSS = `[data-easit-plus-menu-closed] { display: none !important; }
+${TICKET_BAR_CSS}
+.easit-plus-ticket-panels {position:fixed; inset:0; z-index:2147483000; overflow:hidden; pointer-events:none;}
+.easit-plus-ticket-panel {position:absolute; inset:0; pointer-events:auto; background:var(--easit-plus-ui-surface);}
+.easit-plus-ticket-panel:not([data-easit-plus-tab-fullscreen]) {
+  inset:auto; top:var(--easit-plus-workspace-top); left:var(--easit-plus-workspace-left);
+  width:var(--easit-plus-workspace-width); height:var(--easit-plus-workspace-height); overflow:hidden;
+}
+.easit-plus-ticket-panel[data-easit-plus-tab-inactive] {opacity:0; pointer-events:none;}
+.easit-plus-ticket-frame {display:block; width:100%; height:100%; border:0;}
+.easit-plus-ticket-frame[data-easit-plus-tab-pending] {width:100vw; height:100vh; opacity:0; pointer-events:none;}
+.easit-plus-ticket-state {position:absolute; inset:12px; margin:0; font:13px Roboto,sans-serif;}
+.easit-plus-tab-menu {
+  position:fixed; inset:auto; margin:0; padding:3px; overflow:hidden;
+  border:1px solid var(--easit-plus-ui-border); border-radius:5px;
+  background:var(--easit-plus-ui-surface); color:var(--easit-plus-ui-text); box-shadow:var(--easit-plus-ui-shadow);
+}
+.easit-plus-tab-menu button {
+  display:block; width:100%; padding:7px 11px; border:0; border-radius:3px;
+  color:inherit; background:transparent; text-align:left; font:12px Roboto,sans-serif; cursor:pointer;
+}
+.easit-plus-tab-menu button:is(:hover,:focus-visible) {background:var(--easit-plus-ui-hover);}
+[data-easit-plus-ticket-covered] {opacity:0 !important; pointer-events:none;}
 .easit-plus-collapsed { display: none !important; }
 .easit-plus-unread {
   display: inline-block; margin-left: 8px; padding: 2px 5px;
@@ -653,6 +730,7 @@ const POPUP_HTML = `<!doctype html>
         <label class="picker-setting" for="snippetPickerTrigger"><span>Öppna mallväljaren med<small>Till exempel .. i ett textfält.</small></span><input id="snippetPickerTrigger" type="text" required minlength="2" maxlength="20" pattern="\\S{2,20}" autocomplete="off" spellcheck="false" value=".."></label>
       </section>
       <section class="card"><h2>Ärendehantering</h2>
+        <label class="toggle"><span>Ärendeflikar<small>Gör det möjligt att öppna ärenden och informationsvyer i egna flikar i Easit.</small></span><input id="ticketTabsEnabled" type="checkbox"></label>
         <label class="toggle"><span>Gruppering som standard<small>Varje tabell minns sitt eget val.</small></span><input id="groupingEnabled" type="checkbox"></label>
         <label class="toggle"><span>Dispatcherstöd för 1st line<small>Visar köantal och föreslår handläggare utifrån senast avlästa kö.</small></span><input id="firstLineWorkloadEnabled" type="checkbox"></label>
         <label class="toggle"><span>Automatisk olästhantering<small>Avmarkerar Oläst e-post vid Skicka och visar knappen Stäng och markera som läst.</small></span><input id="mailUnreadEnabled" type="checkbox"></label>
@@ -769,6 +847,8 @@ const PAGE_MODULES = [
   initFollowup,
   initAssigneePicker,
   initFirstline,
+  initTicketTabs,
+  initTabNavigation,
   initContent,
   initGrouping,
   initIcon,
@@ -857,6 +937,7 @@ function initSettings({globalThis, api}) {
   const KEY = 'easitPlusSettingsV1';
   const DEFAULTS = {
     copyEnabled: true,
+    ticketTabsEnabled: true,
     groupingEnabled: false,
     firstLineWorkloadEnabled: true,
     mailUnreadEnabled: true,
@@ -892,7 +973,7 @@ function initSettings({globalThis, api}) {
   function normalize(value) {
     const source = value && typeof value === 'object' ? value : {};
     const result = {};
-    for (const key of ['groupingEnabled', 'firstLineWorkloadEnabled', 'actionsUndoEnabled', 'themeEnabled', 'loadingEnabled', 'snowfallEnabled', 'secondaryThemeEnabled', 'snippetPickerEnabled']) {
+    for (const key of ['ticketTabsEnabled', 'groupingEnabled', 'firstLineWorkloadEnabled', 'actionsUndoEnabled', 'themeEnabled', 'loadingEnabled', 'snowfallEnabled', 'secondaryThemeEnabled', 'snippetPickerEnabled']) {
       result[key] = typeof source[key] === 'boolean' ? source[key] : DEFAULTS[key];
     }
     result.copyEnabled = result.unreadEnabled = true;
@@ -911,8 +992,8 @@ function initSettings({globalThis, api}) {
     return result;
   }
   let current = normalize(DEFAULTS);
-  const PREVIEW='easitPlusThemePreviewV1';
-  let previewValue = null,sharedPreview=null,previewRevision=0;
+  const PREVIEW='easitPlusThemePreviewV1', OWNER='userscriptPreviewOwner';
+  let previewValue = null,sharedPreview=null,owner=null,previewChanged=false,ownerChanged=false;
   function themePreview(value) {
     if(!value||!normalizeColor(value.themeColor)||!normalizeColor(value.secondaryThemeColor))return null;
     return {themeEnabled:true,secondaryThemeEnabled:true,themeColor:normalizeColor(value.themeColor),secondaryThemeColor:normalizeColor(value.secondaryThemeColor),secondaryThemeTextMode:'auto',snowfallEnabled:value.snowfallEnabled===true};
@@ -922,43 +1003,41 @@ function initSettings({globalThis, api}) {
   const emit = () => listeners.forEach(listener => listener());
   api.changes.addListener((changes, area) => {
     if(area!=='local')return;
-    if(changes[PREVIEW]){previewRevision++;sharedPreview=themePreview(changes[PREVIEW].newValue);emit();}
-    if(!changes[KEY])return;
-    revision++;
-    current = normalize(changes[KEY].newValue);
-    emit();
+    if(changes[PREVIEW]){previewChanged=true;sharedPreview=changes[PREVIEW].newValue;}
+    if(changes[OWNER]){ownerChanged=true;owner=changes[OWNER].newValue;}
+    if(changes[KEY]){revision++;current=normalize(changes[KEY].newValue);}
+    if(changes[KEY] || changes[PREVIEW] || changes[OWNER])emit();
   });
-  const initialRevision = revision,initialPreviewRevision=previewRevision;
-  const ready = api.local.get(null).then(result => {
-    if(previewRevision===initialPreviewRevision)sharedPreview=themePreview(result[PREVIEW]);
-    if (revision === initialRevision) {
-      current = normalize(result[KEY]);
-      const pickerMigrated=typeof result[KEY]?.snippetPickerEnabled!=='boolean'&&pickerConflict(result,current.snippetPickerTrigger);
-      if(pickerMigrated)current.snippetPickerEnabled=false;
-      const migrate = result.easitPlusDefaultsV2 !== true;
-      if(migrate)current.groupingEnabled=false;
-      emit();
-      if(migrate || pickerMigrated || result[KEY] && ('colors' in result[KEY] || 'colorsEnabled' in result[KEY] || 'darkMode' in result[KEY] || 'polishedEnabled' in result[KEY]))
-        return api.local.set({[KEY]:current,easitPlusDefaultsV2:true});
-    }
+  const ready = (api.readSettings?.() ?? api.local.get(null)).then(result => {
+    if(!previewChanged)sharedPreview=result[PREVIEW];
+    if(!ownerChanged)owner=result[OWNER];
+    if(revision){emit();return;}
+    current = normalize(result[KEY]);
+    const pickerMigrated=typeof result[KEY]?.snippetPickerEnabled!=='boolean'&&pickerConflict(result,current.snippetPickerTrigger);
+    if(pickerMigrated)current.snippetPickerEnabled=false;
+    const migrate = result.easitPlusDefaultsV2 !== true;
+    if(migrate)current.groupingEnabled=false;
+    emit();
+    if(migrate || pickerMigrated || result[KEY] && ('colors' in result[KEY] || 'colorsEnabled' in result[KEY] || 'darkMode' in result[KEY] || 'polishedEnabled' in result[KEY]))
+      return api.local.set({[KEY]:current,easitPlusDefaultsV2:true},{preserveTheme:true});
   });
   function pickerConflict(data,trigger) {
     return Object.entries(data).some(([key,item])=>key.startsWith('easitPlusSnippetV1:')&&typeof item?.trigger==='string'&&(item.trigger.startsWith(trigger)||trigger.startsWith(item.trigger)));
   }
   globalThis.EasitPlusSettings = {
     ready, normalize, normalizeColor, textIsWhite,
-    get: () => normalize(previewValue || {...current,...sharedPreview}),
+    get: () => normalize(previewValue || {...current,...(owner && sharedPreview?.owner===owner ? themePreview(sharedPreview) : null)}),
     saved: () => normalize(current),
     preview: value => {previewValue=normalize(value);emit();},
     clearPreview: () => {previewValue=null;emit();},
     defaults: () => normalize(DEFAULTS),
     subscribe: listener => {listeners.add(listener); return () => listeners.delete(listener);},
-    save: async value => {
+    save: async (value,applyTheme=false) => {
       if(value?.snippetPickerEnabled&&!/^\S{2,20}$/.test(value.snippetPickerTrigger||''))throw new Error('Väljarens trigger ska ha 2–20 tecken utan mellanslag.');
       const normalized=normalize(value),before=revision;
       if(normalized.snippetPickerEnabled&&(!current.snippetPickerEnabled||normalized.snippetPickerTrigger!==current.snippetPickerTrigger)&&pickerConflict(await api.local.get(null),normalized.snippetPickerTrigger))throw new Error('Väljarens trigger krockar med en textmalls trigger. Välj en annan.');
-      await api.local.set({[KEY]:normalized});
-      if(revision===before){current=normalized;emit();}
+      const saved=await api.local.set({[KEY]:normalized},{preserveTheme:!applyTheme,endThemePreview:applyTheme});
+      if(revision===before){current=normalize(saved?.[KEY] ?? normalized);emit();}
     }
   };
 }
@@ -1604,10 +1683,11 @@ function initLoading({window, document, globalThis, api, Element, MutationObserv
   let toast = null, title = null, detail = null, symbol = null, copy = null, timer = null, dismiss = null;
   let phaseStart = null, startedAt = null, elapsed = 0, ended = null, activeCount = 0;
   let cycleId = null, settlingAt = null, completedAt = null;
-  let iconPending = false, dismissedCycle = null;
+  let iconPending = false;
   let stopped = false, stopWatching = null, unsubscribe = null, listening = false;
   const iconDocuments = new Map();
-  let scanQueued = false, reportedBusy = null, iconPoll = null;
+  const reportedBusy = new Set();
+  let scanQueued = false, iconPoll = null;
   const pointerEvents = ['pointerdown','pointerup','mousedown','mouseup','click','dblclick','contextmenu'];
   const seconds = value => `${(Math.max(0,value)/1000).toLocaleString('sv-SE',{minimumFractionDigits:1,maximumFractionDigits:1})} s`;
   function stop() {
@@ -1646,7 +1726,7 @@ function initLoading({window, document, globalThis, api, Element, MutationObserv
   function render() {
     if (stopped) return;
     const active = phaseStart !== null, duration = active ? (settlingAt ?? Date.now())-phaseStart : elapsed;
-    if (!startedAt || dismissedCycle === cycleId) return;
+    if (!startedAt) return;
     if (duration <= showAfterMs()) {if(toast)hideToast();return;}
     if (!toast) buildToast();
     toast.dataset.loading = String(active);
@@ -1663,17 +1743,18 @@ function initLoading({window, document, globalThis, api, Element, MutationObserv
       const duration = settings.get().loadingDismissSeconds * 1000;
       const remaining = Math.max(0, completedAt + duration - Date.now());
       globalThis.EasitPlusFeedback.countdown(toast, duration, remaining);
-      dismiss = setTimeout(clearMoment, remaining);
+      dismiss = setTimeout(closeNotice, remaining);
     }
   }
   function start(at,id) {
-    dismissedCycle = null; clearMoment(); phaseStart = Math.min(Date.now(),at); startedAt = new Date(phaseStart); cycleId = id;
+    clearMoment(); phaseStart = Math.min(Date.now(),at); startedAt = new Date(phaseStart); cycleId = id;
     timer = setInterval(render,100);
   }
-  function complete(at) {
-    elapsed = Math.max(0,at-phaseStart); phaseStart = null; ended = at; settlingAt = null; completedAt = Date.now();
+  function complete(at, shownSince) {
+    elapsed = Math.max(0,at-phaseStart); phaseStart = null; ended = at; settlingAt = null; completedAt = shownSince;
     clearInterval(timer); timer = null;
     if (elapsed <= showAfterMs()) {clearMoment(); return;}
+    if (Date.now() - completedAt >= settings.get().loadingDismissSeconds * 1000) {closeNotice(); return;}
     render(); scheduleDismiss();
   }
   function update() {
@@ -1687,21 +1768,21 @@ function initLoading({window, document, globalThis, api, Element, MutationObserv
       render();
     } else if (latest.finished) {
       const done = latest.finished;
-      if (phaseStart === null || cycleId !== done.id) start(done.startedAt,done.id);
-      complete(done.endedAt);
-    } else if (latest.cancelled) clearMoment();
+      if (cycleId === done.id && ended !== null) return;
+      if (cycleId !== done.id) start(done.startedAt,done.id);
+      complete(done.endedAt,latest.at-done.visibleMs);
+    } else clearMoment();
   }
   function receive(message) {
     if (stopped) return;
-    if (message?.type !== MESSAGE || !Number.isSafeInteger(message.revision) || message.revision < revision || !Number.isFinite(message.at) || !Array.isArray(message.requests)) return;
-    // A query can report the completed revision before its final event arrives.
-    if (message.revision === revision && !(message.finished && latest?.finished?.id !== message.finished.id) && !(message.cancelled && !latest?.cancelled)) return;
+    if (message?.type !== MESSAGE || typeof message.workspace !== 'string' || !Number.isSafeInteger(message.revision) || message.revision <= revision || !Number.isFinite(message.at) || !Array.isArray(message.requests)) return;
+    if (latest && latest.workspace !== message.workspace) clearMoment();
     revision = message.revision;
     const requests = message.requests.filter(item=>typeof item.id === 'string' && Number.isFinite(item.startedAt));
     const done = message.finished;
     const cycle = message.cycle;
     const validCycle = cycle && typeof cycle.id === 'string' && Number.isFinite(cycle.startedAt) && Number.isFinite(cycle.lastAt) ? cycle : null;
-    latest = {at:message.at,requests,cycle:validCycle,cancelled:message.cancelled === true,finished:done && typeof done.id === 'string' && Number.isFinite(done.startedAt) && Number.isFinite(done.endedAt) && done.endedAt >= done.startedAt ? done : null};
+    latest = {workspace:message.workspace,at:message.at,requests,cycle:validCycle,finished:done && typeof done.id === 'string' && Number.isFinite(done.startedAt) && Number.isFinite(done.endedAt) && done.endedAt >= done.startedAt && Number.isFinite(done.visibleMs) ? done : null};
     update();
   }
   // Keep the candidate list small; no document-wide scan runs on a timer.
@@ -1711,22 +1792,33 @@ function initLoading({window, document, globalThis, api, Element, MutationObserv
     if (!view) return false;
     const style = view.getComputedStyle(element);
     if (style.visibility === 'hidden' || style.visibility === 'collapse') return false;
-    for (let parent = element; parent; parent = parent.parentElement) if (view.getComputedStyle(parent).opacity === '0') return false;
-    try {return !view.frameElement || visible(view.frameElement);} catch {return false;}
+    for (let parent = element; parent; parent = parent.parentElement) {
+      if (!parent.hasAttribute('data-easit-plus-ticket-covered') && view.getComputedStyle(parent).opacity === '0') return false;
+    }
+    try {
+      return !view.frameElement || view.frameElement.classList.contains('easit-plus-ticket-frame') || visible(view.frameElement);
+    } catch {return false;}
   }
   function scanIcons() {
     scanQueued = false;
     if (stopped) return;
-    let busy = false, count = 0;
-    for (const candidates of iconDocuments.values()) for (const icon of candidates) {
+    const busy = new Set();
+    let count = 0;
+    for (const [doc, candidates] of iconDocuments) for (const icon of candidates) {
       if (!icon.isConnected || !icon.matches('.z-loading-icon')) {candidates.delete(icon); continue;}
-      count++; if (visible(icon)) busy = true;
+      count++;
+      const workspace = timingWorkspace(doc.defaultView);
+      if (workspace && !busy.has(workspace) && visible(icon)) busy.add(workspace);
     }
     if (count && !iconPoll) iconPoll = setInterval(scheduleIcons,250);
     if (!count && iconPoll) {clearInterval(iconPoll); iconPoll = null;}
-    if (busy === reportedBusy) return;
-    reportedBusy = busy;
-    send({type:'easit-plus-loading-icon-v1',busy},()=>{reportedBusy=null;});
+    for (const workspace of new Set([...busy, ...reportedBusy])) {
+      const visible = busy.has(workspace);
+      if (visible === reportedBusy.has(workspace)) continue;
+      if (visible) reportedBusy.add(workspace);
+      else reportedBusy.delete(workspace);
+      send({type:'easit-plus-loading-icon-v1',workspace,busy:visible});
+    }
   }
   function scheduleIcons() {if (!stopped && !scanQueued) {scanQueued=true; queueMicrotask(scanIcons);}}
   stopWatching = globalThis.EasitPlusDocuments.watch(doc=>{
@@ -1741,7 +1833,10 @@ function initLoading({window, document, globalThis, api, Element, MutationObserv
     });
     observer.observe(doc,{subtree:true,childList:true,attributes:true,attributeFilter:['class','style','hidden','inert','aria-hidden']});
     scheduleIcons();
-    return ()=>{observer.disconnect(); iconDocuments.delete(doc); scheduleIcons();};
+    return ()=>{
+      observer.disconnect(); iconDocuments.delete(doc); scheduleIcons();
+      globalThis.EasitPlusLoadTiming?.detach(doc);
+    };
   });
   async function copyResult() {
     if (stopped || !toast || !startedAt || phaseStart !== null || ended === null || copy.disabled) return;
@@ -1751,11 +1846,9 @@ function initLoading({window, document, globalThis, api, Element, MutationObserv
     catch {if (startedAt === stamp) {button.dataset.state = 'error'; button.title = 'Kunde inte kopiera – försök igen'; button.setAttribute('aria-label',button.title); title.textContent = button.title;}}
   }
   function closeNotice() {
-    dismissedCycle = cycleId;
-    clearInterval(timer); timer = null;
-    clearTimeout(dismiss); dismiss = null;
-    globalThis.EasitPlusFeedback.clearCountdown(toast);
-    toast?.remove(); toast = copy = null;
+    const id = cycleId;
+    clearMoment();
+    if (id) send({type:'easit-plus-loading-dismiss-v1',workspace:latest.workspace,id});
   }
   function onPointer(event) {
     if (stopped) return;
@@ -3049,11 +3142,977 @@ function initFirstline({window, document, globalThis, api, Element, MutationObse
   observe();ready.then(schedule);
 }
 
+function formTicketId(form) {
+  const field = form?.querySelector('[testid="component-ID"], [testid="component-Ärendenummer"]');
+  const control = field?.matches('input') ? field : field?.querySelector('input:not([type="hidden"])');
+  const id = (control?.value || field?.querySelector('.easit-showlabel')?.textContent || field?.textContent || '').trim();
+  return /^\d+$/.test(id) ? id : '';
+}
+
+function tabRowText(row) {
+  return [...row.cells].map(cell => {
+    const labels = [...cell.querySelectorAll('.easit-showlabel')];
+    return (labels.length ? labels.map(label => label.textContent).join(' ') : cell.textContent).replace(/\s+/g,' ').trim();
+  });
+}
+
+function tabTableHeaders(list) {
+  return [...list.querySelectorAll('.z-listheader, .z-column')]
+    .filter(header => header.closest('.z-listbox, .z-grid') === list)
+    .map(header => header.textContent.trim());
+}
+
+function isInventoryTable(list) {
+  if (!list || list.closest('.easit-history-function')) return false;
+  const columns = tabTableHeaders(list).map(label => label.toLocaleLowerCase('sv'));
+  return ['namn', 'serienummer', 'anskaffningsdatum'].every(label => columns.includes(label));
+}
+
+function findTabRows(document, locator) {
+  const matches = [];
+  for (const list of document.querySelectorAll('.z-listbox, .z-grid')) {
+    if (list.closest('.easit-history-function') || JSON.stringify(tabTableHeaders(list)) !== locator.headers) continue;
+    if (locator.container && list.closest('.eFormFunctionContainer, .easit-function')?.getAttribute('testid') !== locator.container) continue;
+    for (const row of list.querySelectorAll('tr.z-listitem, tr.z-row')) {
+      if (row.closest('.z-listbox, .z-grid') === list && JSON.stringify(tabRowText(row)) === locator.cells) matches.push(row);
+    }
+  }
+  return matches;
+}
+
+function expandTicketContent(document) {
+  const sidebar = document.querySelector('.menu-left');
+  const workspace = document.querySelector(TICKET_BOTTOM);
+  const content = workspace?.querySelector(`${TICKET_FORM}, ${TICKET_VIEW}, .easit-item-view-widget`) ||
+    document.querySelector(`${TICKET_FORM}, ${TICKET_VIEW}, .easit-item-view-widget`) || workspace;
+  let sidebarBranch, contentBranch;
+  if (sidebar && content) {
+    for (let child = sidebar, parent = child.parentElement; parent && parent !== document.documentElement;
+      child = parent, parent = parent.parentElement) {
+      if (!parent.contains(content) || child.contains(content)) continue;
+      sidebarBranch = child;
+      contentBranch = [...parent.children].find(node => node.contains(content));
+      break;
+    }
+  }
+  for (const [attribute, node] of [['data-easit-plus-tab-sidebar', sidebarBranch], ['data-easit-plus-tab-content', contentBranch]]) {
+    const old = document.querySelector('[' + attribute + ']');
+    if (old === node) continue;
+    old?.removeAttribute(attribute);
+    node?.setAttribute(attribute, '');
+  }
+}
+
+function showTicketContent(document, workspace) {
+  const root = document?.documentElement;
+  if (!root) return;
+  if (!document.querySelector('style[data-easit-plus-ticket-frame-css]')) {
+    const style = document.createElement('style');
+    style.setAttribute('data-easit-plus-ticket-frame-css', '');
+    style.textContent = TICKET_FRAME_CSS + TICKET_BAR_CSS;
+    (document.head || root).append(style);
+  }
+  root.toggleAttribute('data-easit-plus-ticket-frame', !workspace);
+  root.toggleAttribute('data-easit-plus-tab-workspace', !!workspace);
+  if (workspace && !workspace.top.hasAttribute('data-easit-plus-tab-toolbar')) {
+    workspace.top.setAttribute('data-easit-plus-tab-toolbar', '');
+  }
+}
+
+function findTicketWorkspace(document, requireRendered = false) {
+  for (const bottom of document.querySelectorAll(TICKET_BOTTOM)) {
+    if (requireRendered && !bottom.getClientRects().length) continue;
+    for (let top = bottom.previousElementSibling; top; top = top.previousElementSibling) {
+      if (top.matches(TICKET_TOP)) return {top, bottom};
+      if (top.matches(TICKET_BOTTOM)) break;
+    }
+  }
+  return null;
+}
+
+function ticketPathLabel(top) {
+  for (const part of ['itemPath', 'viewPath', 'modulePath']) {
+    for (const node of top?.querySelectorAll('.navPath .' + part) || []) {
+      if (node.closest(TICKET_TOP) !== top) continue;
+      const label = node.textContent.replace(/\s+/g, ' ').trim();
+      if (!label) continue;
+      let visible = true;
+      for (let element = node; element !== top; element = element.parentElement) {
+        if (element.matches('[hidden], [aria-hidden="true"]') || element.style.display === 'none') {
+          visible = false;
+          break;
+        }
+      }
+      if (visible) return label;
+    }
+  }
+  const label = top?.querySelector('.navPath > .z-label:not([hidden], [aria-hidden="true"])');
+  return label?.textContent.replace(/\s+/g, ' ').trim() || '';
+}
+
+function initTicketTabs({window, document, globalThis, MutationObserver, requestAnimationFrame}) {
+  const enabled = () => globalThis.EasitPlusSettings?.get().ticketTabsEnabled !== false;
+  if (window !== window.top) {
+    const frame = window.frameElement;
+    if (!frame?.classList.contains('easit-plus-ticket-frame')) return;
+    if (!frame.hasAttribute('data-easit-plus-tab-pending')) showTicketContent(document);
+    function openInParent(detail) {
+      return enabled() && !frame.dispatchEvent(new window.CustomEvent(TICKET_TAB_OPEN, {cancelable:true, detail}));
+    }
+    globalThis.EasitPlusTicketTabs = {
+      enabled,
+      open:(url, title) => openInParent({url, title}),
+      openWorkspaceAction:(action, title) => openInParent({workspaceAction:action, title}),
+      openDestination:destination => openInParent({destination}),
+      openRow:destination => openInParent({destination})
+    };
+    return;
+  }
+
+  const bar = document.createElement('div');
+  bar.className = 'easit-plus-ticket-tabs';
+  bar.setAttribute('data-easit-plus-addon', '');
+  bar.setAttribute('role', 'tablist');
+  bar.setAttribute('aria-label', 'Ärendeflikar');
+  function createSpace(doc) {
+    const space = doc.createElement('div');
+    space.className = 'easit-plus-ticket-tab-space';
+    space.setAttribute('data-easit-plus-addon', '');
+    space.setAttribute('aria-hidden', 'true');
+    return space;
+  }
+  const homeSpace = createSpace(document);
+
+  // Keep the frames outside ZK's replaceable workspace DOM.
+  const panels = document.createElement('div');
+  panels.className = 'easit-plus-ticket-panels';
+  panels.setAttribute('data-easit-plus-addon', '');
+  panels.hidden = true;
+  const tabs = new Set();
+  const barEntries = new WeakMap();
+  const covered = new Map();
+  let active = null, layout = null;
+  let sequence = 0, layoutPending = false, positionPending = false;
+  let homeBrowserTitle = '';
+  let spacerHeight = 32;
+
+  function cover(elements) {
+    for (const [element, wasInert] of covered) {
+      if (elements.includes(element)) continue;
+      element.removeAttribute('data-easit-plus-ticket-covered');
+      element.inert = wasInert;
+      covered.delete(element);
+    }
+    for (const element of elements) {
+      if (!element || covered.has(element)) continue;
+      covered.set(element, !!element.inert);
+      element.inert = true;
+      element.setAttribute('data-easit-plus-ticket-covered', '');
+    }
+  }
+
+  function activeWorkspace() {
+    const workspace = active?.workspace;
+    return workspace?.top.isConnected && workspace.bottom.isConnected ? workspace : null;
+  }
+
+  function setPixels(element, dimensions) {
+    for (const [property, value] of Object.entries(dimensions)) {
+      const position = value + 'px';
+      if (element.style[property] !== position) element.style[property] = position;
+    }
+  }
+
+  function position() {
+    if (!tabs.size) return;
+    const workspace = activeWorkspace();
+    const space = workspace ? active.space : homeSpace;
+    if (space?.isConnected && space.nextElementSibling === (workspace?.bottom || layout?.bottom)) {
+      const {left, top, width} = space.getBoundingClientRect();
+      const frame = workspace ? active.frame.getBoundingClientRect() : {left:0, top:0};
+      setPixels(bar, {left:left + frame.left, top:top + frame.top, width});
+      const height = bar.offsetHeight || spacerHeight;
+      if (height !== spacerHeight) {
+        spacerHeight = height;
+        for (const spacer of [homeSpace, ...[...tabs].map(tab => tab.space)]) {
+          if (spacer) setPixels(spacer, {height});
+        }
+      }
+    }
+    if (layout?.bottom.isConnected) {
+      const {left, top, width, height} = layout.bottom.getBoundingClientRect();
+      for (const [name, value] of Object.entries({left, top, width, height})) {
+        const property = '--easit-plus-workspace-' + name;
+        if (panels.style.getPropertyValue(property) !== value + 'px') panels.style.setProperty(property, value + 'px');
+      }
+    }
+  }
+
+  function queuePosition() {
+    if (!tabs.size || positionPending) return;
+    positionPending = true;
+    requestAnimationFrame(() => {
+      positionPending = false;
+      position();
+    });
+  }
+
+  function queueLayout() {
+    if (!tabs.size || layoutPending) return;
+    layoutPending = true;
+    requestAnimationFrame(() => {
+      layoutPending = false;
+      if (tabs.size) syncLayout();
+    });
+  }
+
+  const resizeObserver = new window.ResizeObserver(queuePosition);
+  function syncLayout() {
+    const next = findTicketWorkspace(document, true);
+    if (next?.bottom !== layout?.bottom || next?.top !== layout?.top) {
+      resizeObserver.disconnect();
+      layout = next;
+      resizeObserver.observe(bar);
+      resizeObserver.observe(homeSpace);
+      if (layout) {
+        resizeObserver.observe(layout.top);
+        resizeObserver.observe(layout.bottom);
+      }
+    }
+    const workspace = activeWorkspace();
+    const bottom = workspace?.bottom || layout?.bottom;
+    if (layout && homeSpace.nextElementSibling !== layout.bottom) layout.bottom.before(homeSpace);
+    if (layout?.bottom.id) home.button.setAttribute('aria-controls', layout.bottom.id);
+    else home.button.removeAttribute('aria-controls');
+    const viewingTicket = !!(active && bottom);
+    if (workspace) {
+      cover([layout?.top, layout?.bottom, document.querySelector('.menu-left')]);
+    } else {
+      cover(viewingTicket ? [layout?.bottom] : []);
+    }
+    // Keep each iframe laid out at the same size while another tab is selected.
+    if (panels.hidden === Boolean(tabs.size)) panels.hidden = !tabs.size;
+    position();
+    updateHomeTitle();
+  }
+
+  const layoutObserver = new MutationObserver(records => {
+    if (!bar.isConnected && document.body) document.body.append(bar);
+    if (!panels.isConnected && document.body) document.body.prepend(panels);
+    if (!layout?.top.isConnected || !layout?.bottom.isConnected || homeSpace.nextElementSibling !== layout.bottom) queueLayout();
+    else if (records.some(record => layout.top.contains(record.target))) updateHomeTitle();
+  });
+
+  const titleObserver = new MutationObserver(updateBrowserTitle);
+
+  function createButton(label, movable = true) {
+    const item = document.createElement('div');
+    item.className = 'easit-plus-ticket-tab';
+    item.setAttribute('role', 'presentation');
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.setAttribute('role', 'tab');
+    button.draggable = movable;
+    if (movable) button.setAttribute('aria-keyshortcuts', 'Alt+ArrowLeft Alt+ArrowRight');
+    else {
+      item.setAttribute('data-easit-plus-tab-home', '');
+      button.setAttribute('aria-description', 'Huvudflik');
+    }
+    button.title = button.textContent = label;
+    item.append(button);
+    bar.append(item);
+    const entry = {item, button};
+    barEntries.set(item, entry);
+    return entry;
+  }
+
+  const tabOrder = () => [...bar.children].map(item => barEntries.get(item));
+
+  function select(tab, focus = true) {
+    clearDrag();
+    if (active !== tab) globalThis.EasitPlusHeaderPopup?.close?.(false);
+    active = tab;
+    globalThis.EasitPlusLoadTiming?.select(tab?.id || 'home');
+    for (const entry of [home, ...tabs]) {
+      const selected = entry === (tab || home);
+      entry.button.setAttribute('aria-selected', String(selected));
+      entry.button.tabIndex = selected ? 0 : -1;
+      if (entry.panel) {
+        entry.panel.toggleAttribute('data-easit-plus-tab-inactive', !selected);
+        entry.panel.inert = !selected;
+        entry.close.tabIndex = selected ? 0 : -1;
+      }
+    }
+    syncLayout();
+    if (focus) (tab || home).button.focus();
+  }
+
+  const home = createButton('Arbetsyta', false);
+  home.button.addEventListener('click', () => select(null));
+  bar.addEventListener('keydown', event => {
+    if (event.target.getAttribute('role') !== 'tab') return;
+    const order = tabOrder();
+    const entry = active || home;
+    const index = order.indexOf(entry);
+    if (event.altKey && ['ArrowLeft', 'ArrowRight'].includes(event.key)) {
+      event.preventDefault();
+      event.stopPropagation();
+      const neighbor = order[index + (event.key === 'ArrowLeft' ? -1 : 1)];
+      if (entry !== home && neighbor && neighbor !== home) {
+        if (event.key === 'ArrowLeft') neighbor.item.before(entry.item);
+        else neighbor.item.after(entry.item);
+        entry.button.focus();
+      }
+      return;
+    }
+    const next = {ArrowLeft:(index + order.length - 1) % order.length,
+      ArrowRight:(index + 1) % order.length, Home:0, End:order.length - 1}[event.key];
+    if (next !== undefined) {
+      event.preventDefault();
+      event.stopPropagation();
+      select(order[next] === home ? null : order[next]);
+    } else if (event.key === 'Delete' && active) {
+      event.preventDefault();
+      event.stopPropagation();
+      requestClose(active);
+    }
+  });
+
+  let dragged, dropTarget, dropBefore;
+  function clearDrag() {
+    dragged?.removeAttribute('data-easit-plus-tab-dragging');
+    dropTarget?.removeAttribute('data-easit-plus-tab-drop');
+    dragged = dropTarget = null;
+  }
+  bar.addEventListener('dragstart', event => {
+    const button = event.target.closest?.('button[role="tab"]');
+    if (!button?.draggable || !event.dataTransfer) return;
+    clearDrag();
+    dragged = button.parentElement;
+    dragged.setAttribute('data-easit-plus-tab-dragging', '');
+    event.dataTransfer.effectAllowed = 'move';
+    event.dataTransfer.setData('application/x-easit-plus-tab', 'move');
+    event.stopPropagation();
+  });
+  function markDrop(event) {
+    if (!dragged) return;
+    event.preventDefault();
+    event.stopPropagation();
+    dropTarget?.removeAttribute('data-easit-plus-tab-drop');
+    const candidates = [...bar.children].filter(item => item !== dragged && item !== home.item);
+    const next = candidates.find(item => {
+      const {left, width} = item.getBoundingClientRect();
+      return event.clientX < left + width / 2;
+    });
+    dropBefore = !!next;
+    dropTarget = next || candidates.at(-1);
+    dropTarget?.setAttribute('data-easit-plus-tab-drop', dropBefore ? 'before' : 'after');
+  }
+  bar.addEventListener('dragover', event => {
+    markDrop(event);
+    if (dragged && event.dataTransfer) event.dataTransfer.dropEffect = 'move';
+  });
+  bar.addEventListener('drop', event => {
+    markDrop(event);
+    const focused = dragged?.contains(bar.ownerDocument.activeElement);
+    if (dropTarget && dropBefore) dropTarget.before(dragged);
+    else if (dropTarget) dropTarget.after(dragged);
+    if (focused) barEntries.get(dragged)?.button.focus();
+    clearDrag();
+  });
+  bar.addEventListener('dragend', clearDrag);
+
+  function requestClose(tab) {
+    // Navigate so the browser runs the frame's own beforeunload handlers.
+    // Only remove the frame after a committed navigation.
+    tab.frame.srcdoc = `<!doctype html><html data-easit-plus-ticket-closed="${++tab.closeAttempts}"><title></title></html>`;
+  }
+
+  function finishClose(tab) {
+    if (!tabs.delete(tab)) return;
+    const order = tabOrder().filter(entry => entry !== home);
+    const index = order.indexOf(tab);
+    const hadFocus = tab.item.contains(document.activeElement);
+    const next = active === tab ? order[index - 1] || order[index + 1] || null : active;
+    clearDrag();
+    tab.space?.remove();
+    globalThis.EasitPlusLoadTiming?.remove(tab.id);
+    tab.dispose?.();
+    tab.panel.remove();
+    tab.item.remove();
+    if (tabs.size) {
+      select(next, hadFocus);
+    } else {
+      active = null;
+      globalThis.EasitPlusHeaderPopup?.close?.(false);
+      globalThis.EasitPlusLoadTiming?.select('home');
+      clearDrag();
+      cover([]);
+      layoutObserver.disconnect();
+      resizeObserver.disconnect();
+      titleObserver.disconnect();
+      updateHomeTitle();
+      layout = null;
+      panels.remove();
+      bar.remove();
+      homeSpace.remove();
+    }
+  }
+
+  function updateBrowserTitle() {
+    const title = active?.button.textContent || ticketPathLabel(layout?.top) || homeBrowserTitle;
+    if (document.title !== title) document.title = title;
+  }
+
+  function updateHomeTitle() {
+    setTabLabel(home, ticketPathLabel(layout?.top) || 'Arbetsyta');
+    updateBrowserTitle();
+  }
+
+  function setTabLabel(tab, label) {
+    if (label === tab.button.textContent) return;
+    tab.button.title = tab.button.textContent = label;
+    if (tab.close) {
+      tab.close.title = 'Stäng ' + label;
+      tab.close.setAttribute('aria-label', tab.close.title);
+      tab.frame.title = label;
+    }
+  }
+
+  function watchTicket(tab, ticketDocument) {
+    tab.space?.remove();
+    const space = tab.space = createSpace(ticketDocument);
+    setPixels(space, {height:spacerHeight});
+    let repair = 0;
+    function mountSpace() {
+      const bottom = tab.workspace?.bottom;
+      if (bottom?.isConnected && space.nextElementSibling !== bottom) bottom.before(space);
+      if (active === tab) queuePosition();
+    }
+    function update() {
+      const workspace = findTicketWorkspace(ticketDocument, true) || findTicketWorkspace(ticketDocument);
+      const previous = tab.workspace;
+      if (previous?.top !== workspace?.top) previous?.top.removeAttribute('data-easit-plus-tab-toolbar');
+      tab.workspace = workspace;
+      showTicketContent(ticketDocument, workspace);
+      if (!workspace) expandTicketContent(ticketDocument);
+      if (workspace) tab.panel.setAttribute('data-easit-plus-tab-fullscreen', '');
+      if (workspace && space.nextElementSibling !== workspace.bottom && !repair) {
+        repair = requestAnimationFrame(() => {repair = 0; mountSpace();});
+      }
+      if (active === tab) {
+        if (previous?.top !== workspace?.top || previous?.bottom !== workspace?.bottom) syncLayout();
+      }
+      let label = ticketPathLabel(workspace?.top);
+      if (!workspace) {
+        for (const top of ticketDocument.querySelectorAll(TICKET_TOP)) {
+          label = ticketPathLabel(top);
+          if (label) break;
+        }
+      }
+      if (label) {
+        setTabLabel(tab, label);
+        if (active === tab) updateBrowserTitle();
+        return;
+      }
+      const forms = [...ticketDocument.querySelectorAll(TICKET_FORM)];
+      const form = forms.filter(item => item.getClientRects().length).at(-1) || forms.at(-1);
+      const field = form?.querySelector('[testid="component-Rubrik"], [testid="component-Namn"]') ||
+        form?.querySelector('.easit-label[title="Rubrik"]')?.closest('.eFormFieldContainer');
+      const value = field?.matches('input,textarea') ? field.value :
+        field?.querySelector('input:not([type="hidden"]),textarea')?.value ??
+        field?.querySelector('.easit-showlabel, [contenteditable="true"]')?.textContent;
+      const pathId = ticketDocument.location?.pathname.match(/\/sequenceId\/(\d+)\/?$/)?.[1];
+      const id = formTicketId(form) || pathId || tab.ticketId;
+      const title = value?.trim() || tab.title;
+      setTabLabel(tab, id ? (title ? `#${id} · ${title}` : '#' + id) : title);
+      if (active === tab) updateBrowserTitle();
+    }
+    const observer = new MutationObserver(records => {
+      if (records.some(record => record.attributeName !== 'style' || record.target.closest('.navPath'))) update();
+    });
+    observer.observe(ticketDocument, {subtree:true, childList:true, characterData:true,
+      attributes:true, attributeFilter:['value','title','hidden','aria-hidden','style']});
+    ticketDocument.addEventListener('input', update, true);
+    ticketDocument.addEventListener('change', update, true);
+    ticketDocument.defaultView?.addEventListener('scroll', queuePosition, {capture:true, passive:true});
+    update();
+    mountSpace();
+    return () => {
+      if (repair) window.cancelAnimationFrame(repair);
+      observer.disconnect();
+      ticketDocument.removeEventListener('input', update, true);
+      ticketDocument.removeEventListener('change', update, true);
+      ticketDocument.defaultView?.removeEventListener('scroll', queuePosition, true);
+    };
+  }
+
+  function openPage(url, title, ticketId, {destination, workspaceAction} = {}) {
+    if (!enabled()) return false;
+    if (!activeWorkspace() && !findTicketWorkspace(document, true)) return false;
+    if (!tabs.size) {
+      homeBrowserTitle = document.title;
+      document.body.append(panels, bar);
+      layoutObserver.observe(document, {subtree:true, childList:true, characterData:true,
+        attributes:true, attributeFilter:['hidden','aria-hidden','style']});
+      if (document.head) titleObserver.observe(document.head, {subtree:true, childList:true, characterData:true});
+    }
+    const label = ticketId ? (title ? `#${ticketId} · ${title}` : '#' + ticketId) : title;
+    const tab = createButton(label);
+    tab.title = title;
+    tab.ticketId = ticketId;
+    tab.closeAttempts = 0;
+    const number = ++sequence;
+    tab.id = 'ticket-' + number;
+    tab.button.id = 'easit-plus-ticket-tab-' + number;
+    tab.button.addEventListener('click', () => select(tab));
+    tab.close = document.createElement('button');
+    tab.close.type = 'button';
+    tab.close.dataset.closeTicketTab = '';
+    tab.close.title = 'Stäng ' + label;
+    tab.close.setAttribute('aria-label', tab.close.title);
+    tab.close.textContent = '×';
+    tab.close.addEventListener('click', () => requestClose(tab));
+    tab.item.append(tab.close);
+
+    tab.panel = document.createElement('section');
+    tab.panel.className = 'easit-plus-ticket-panel';
+    tab.panel.id = 'easit-plus-ticket-panel-' + number;
+    tab.panel.setAttribute('role', 'tabpanel');
+    tab.panel.setAttribute('aria-labelledby', tab.button.id);
+    tab.button.setAttribute('aria-controls', tab.panel.id);
+    tab.frame = document.createElement('iframe');
+    tab.frame.className = 'easit-plus-ticket-frame';
+    tab.frame.dataset.easitPlusTabId = tab.id;
+    tab.frame.setAttribute('data-easit-plus-tab-pending', '');
+    tab.frame.title = label;
+    if (url) tab.frame.src = url;
+    let pending = destination;
+    tab.status = document.createElement('p');
+    tab.status.className = 'easit-plus-ticket-state';
+    tab.status.setAttribute('role', 'status');
+    tab.status.textContent = 'Öppnar …';
+    tab.panel.append(tab.status);
+    const finishOpen = globalThis.EasitPlusLoadTiming?.startOpen(tab.id);
+    function failOpen() {
+      tab.status.textContent = 'Kunde inte öppna fliken';
+      finishOpen?.();
+    }
+    function reveal(ticketDocument) {
+      const workspace = findTicketWorkspace(ticketDocument);
+      tab.panel.toggleAttribute('data-easit-plus-tab-fullscreen', !!workspace);
+      tab.dispose = watchTicket(tab, ticketDocument);
+      tab.status.remove();
+      tab.frame.removeAttribute('data-easit-plus-tab-pending');
+      finishOpen?.();
+    }
+    tab.frame.addEventListener(TICKET_TAB_OPEN, event => {
+      const request = event.detail;
+      const destination = request?.destination;
+      const opened = request?.workspaceAction ? openWorkspaceAction(request.workspaceAction, request.title, tab.frame.contentDocument) :
+        destination ? openDestination(destination) : open(request?.url, request?.title);
+      if (opened) event.preventDefault();
+    });
+    tab.frame.addEventListener(TICKET_POPUP_OPEN, event => {
+      if (active !== tab || event.detail?.ownerDocument !== tab.frame.contentDocument) return;
+      globalThis.EasitPlusHeaderPopup?.toggleFrom?.(event.detail, tab.frame);
+    });
+    tab.frame.addEventListener('load', () => {
+      if (!tabs.has(tab)) return;
+      const ticketDocument = tab.frame.contentDocument;
+      if (ticketDocument?.documentElement?.hasAttribute('data-easit-plus-ticket-closed')) {
+        finishClose(tab);
+        return;
+      }
+      if (!url && ticketDocument?.location?.href === 'about:blank') return;
+      tab.dispose?.();
+      tab.dispose = undefined;
+      if (tab.workspace && tab.workspace.top.ownerDocument !== ticketDocument) {
+        tab.workspace = null;
+        if (active === tab) syncLayout();
+      }
+      if (!ticketDocument?.documentElement || ticketDocument.location?.origin !== window.location.origin) {
+        failOpen();
+        return;
+      }
+      if (!pending) {
+        reveal(ticketDocument);
+        return;
+      }
+      const controller = new window.AbortController();
+      tab.dispose = () => controller.abort();
+      runTabDestination(ticketDocument, pending, controller.signal).then(() => {
+        if (controller.signal.aborted) return;
+        pending = null;
+        reveal(ticketDocument);
+      }, () => { if (!controller.signal.aborted) failOpen(); });
+    });
+    tabs.add(tab);
+    tab.panel.append(tab.frame);
+    panels.append(tab.panel);
+    if (workspaceAction) {
+      // Let Easit resolve the live selection before switching away from it.
+      const controller = new window.AbortController();
+      tab.dispose = () => controller.abort();
+      captureWorkspaceTarget(workspaceAction, controller.signal).then(target => {
+        if (!controller.signal.aborted) tab.frame.src = target;
+      }, () => { if (!controller.signal.aborted) failOpen(); });
+    }
+    select(tab);
+    return true;
+  }
+
+  function open(url, title) {
+    if (typeof url !== 'string') return false;
+    let address;
+    try { address = new URL(url); } catch { return false; }
+    const ticketId = address.pathname.match(/^\/openItem\/moduleId\/\d+\/sequenceId\/(\d+)\/?$/)?.[1];
+    if (address.origin !== window.location.origin || !ticketId) return false;
+    return openPage(address.href, typeof title === 'string' ? title : '', ticketId);
+  }
+
+  function openDestination(destination) {
+    if (!['row','new'].includes(destination.kind)) return false;
+    const url = new URL(destination.url || '/', window.location.origin);
+    if (url.origin !== window.location.origin) return false;
+    return openPage(url.href, destination.label, '', {destination});
+  }
+
+  function openWorkspaceAction(action, title, source = document) {
+    if (!source || action?.ownerDocument !== source || !action.isConnected ||
+      !action.matches?.('a.z-menuitem-content:not([disabled], [aria-disabled="true"])') || workspaceRequests.has(source)) return false;
+    return openPage(null, title, '', {workspaceAction:action});
+  }
+
+  globalThis.EasitPlusTicketTabs = {enabled, open, openWorkspaceAction, openDestination, openRow:openDestination};
+  window.addEventListener('click', event => {
+    if (!active || active.workspace || event.button !== 0 || event.defaultPrevented ||
+      event.target.closest?.('.tools-container')) return;
+    const view = sidebarDestination(event.target.closest?.(TAB_SIDEBAR_ROW));
+    const page = active.frame.contentDocument;
+    if (!view || page?.location?.origin !== window.location.origin) return;
+    const target = findSidebarView(page, view);
+    if (!target) return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    target.click();
+  }, true);
+  window.addEventListener('resize', queuePosition);
+  window.addEventListener('scroll', queuePosition, {capture:true, passive:true});
+}
+
+function tabMenuItemLabel(item) {
+  return item?.querySelector(':scope > a :is(.z-menu-text,.z-menuitem-text)')?.textContent.trim() || '';
+}
+
+function tabSubmenuId(item) {
+  return item.querySelector(':scope > a[aria-owns]')?.getAttribute('aria-owns') || item.getAttribute('aria-owns');
+}
+
+function quickAddDestination(item, document) {
+  if (!item || item.matches('.z-menuitem-disabled, .group-menuitem') ||
+    item.querySelector(':scope > a:is([disabled], [aria-disabled="true"])')) return null;
+  const trigger = document.querySelector(TAB_ADD_BUTTON);
+  const rootId = trigger?.getAttribute('aria-controls');
+  const label = tabMenuItemLabel(item);
+  if (!rootId || !label) return null;
+  const path = [];
+  const seen = new Set();
+  for (let current = item; current && !seen.has(current); ) {
+    seen.add(current);
+    path.unshift({id:current.getAttribute('testid'), label:tabMenuItemLabel(current)});
+    const popup = current.parentElement?.closest('.z-menupopup');
+    if (popup?.id === rootId || current.parentElement?.id === rootId + '-cave') return {kind:'new', label, path};
+    if (!popup?.id) return null;
+    current = [...document.querySelectorAll('li.z-menu')].find(owner => tabSubmenuId(owner) === popup.id);
+  }
+  return null;
+}
+
+function sidebarDestination(row) {
+  const label = row?.querySelector('.text-container .item-text')?.textContent.trim();
+  const index = row?.getAttribute('index');
+  return label && index ? {label, index, group:row.getAttribute('groupid')} : null;
+}
+
+function findSidebarView(document, view) {
+  return [...document.querySelectorAll(TAB_SIDEBAR_ROW)].find(item =>
+    item.getAttribute('index') === view.index && item.getAttribute('groupid') === view.group);
+}
+
+function informationSection(label) {
+  return label.replace(/\s+\([\d.,\s]+\)$/, '').trim();
+}
+
+function informationEntries(popup) {
+  return [...popup.querySelectorAll(':scope > ul.z-menupopup-content > li.z-menuitem:not(.z-menuitem-disabled)')]
+    .filter(item => item.querySelector(':scope > a.z-menuitem-content:not([disabled], [aria-disabled="true"])'));
+}
+
+function siblingInformationButton(popup) {
+  const buttons = [...(popup.parentElement?.children || [])].filter(element => element.matches(TAB_INFO_BUTTON));
+  return buttons.length === 1 ? buttons[0] : null;
+}
+
+function findInformationPopup(document, button, previouslyOpen) {
+  const widget = document.defaultView?.zk?.Widget?.$?.(button);
+  const reference = widget?.getPopup?.();
+  const key = typeof reference === 'string' ? reference.split(',')[0].trim() : '';
+  const id = key ? key.match(/^uuid\((.+)\)$/)?.[1] || widget?.$f?.(key, true)?.uuid || key : reference?.uuid;
+  const ids = [id, button.getAttribute('aria-controls'), button.getAttribute('aria-owns')].filter(Boolean);
+  const menus = [...document.querySelectorAll('.z-menupopup-open')].filter(popup =>
+    informationEntries(popup).some(item => informationSection(tabMenuItemLabel(item)) === 'Allmänt'));
+  const linked = menus.find(popup => ids.includes(popup.id));
+  if (linked) return linked;
+  const sibling = menus.find(popup => siblingInformationButton(popup) === button);
+  if (sibling) return sibling;
+  const opened = menus.filter(popup => !previouslyOpen.has(popup));
+  return opened.length === 1 ? opened[0] : null;
+}
+
+const workspaceRequests = new WeakSet();
+function captureWorkspaceTarget(action, signal) {
+  const document = action.ownerDocument;
+  const page = document.defaultView;
+  const originalOpen = page.open;
+  const commands = page.zAu?.cmd0;
+  const originalRedirect = commands?.redirect;
+  return new Promise((resolve, reject) => {
+    let timer, complete = false, address;
+    function finish(error) {
+      if (complete) return;
+      complete = true;
+      workspaceRequests.delete(document);
+      clearTimeout(timer);
+      signal.removeEventListener('abort', cancel);
+      page.removeEventListener('pagehide', cancel);
+      document.removeEventListener('click', captureLink, true);
+      if (page.open === open) Reflect.set(page, 'open', originalOpen);
+      if (commands?.redirect === redirect) Reflect.set(commands, 'redirect', originalRedirect);
+      if (error) reject(error);
+      else resolve(address.href);
+    }
+    function cancel() {
+      finish(Error('Öppningen avbröts'));
+    }
+    function capture(url) {
+      if (typeof url === 'string') url = url.trim();
+      if (!url || url === 'about:blank' || complete || address) return;
+      try {
+        const target = new URL(url, document.baseURI);
+        if (target.origin !== document.location.origin || target.protocol !== document.location.protocol) {
+          throw Error('Arbetsytan öppnas på en annan webbplats');
+        }
+        address = target;
+        queueMicrotask(() => finish());
+      } catch (error) {
+        finish(error);
+      }
+    }
+    const popupLocation = {assign:capture, replace:capture, set href(url) {capture(url);}};
+    const popup = {closed:false, focus(){}, close(){}, get location() {return popupLocation;}, set location(url) {capture(url);}};
+    function isPopupTarget(target) {
+      return typeof target === 'string' && !!target && !/^_(self|parent|top)$/i.test(target);
+    }
+    function open(url, target) {
+      if (target && !isPopupTarget(target)) return Reflect.apply(originalOpen, this, arguments);
+      capture(url);
+      return popup;
+    }
+    function redirect(url, target) {
+      if (!isPopupTarget(target)) return Reflect.apply(originalRedirect, this, arguments);
+      capture(url);
+    }
+    function captureLink(event) {
+      if (!action.contains(event.target) || !isPopupTarget(action.target) || !/^https?:/.test(action.href)) return;
+      event.preventDefault();
+      capture(action.href);
+    }
+    if (signal.aborted) return cancel();
+    workspaceRequests.add(document);
+    signal.addEventListener('abort', cancel, {once:true});
+    page.addEventListener('pagehide', cancel, {once:true});
+    document.addEventListener('click', captureLink, true);
+    if (!Reflect.set(page, 'open', open)) return finish(Error('Kunde inte öppna arbetsytan i fliken'));
+    if (typeof originalRedirect === 'function') Reflect.set(commands, 'redirect', redirect);
+    timer = setTimeout(() => finish(Error('Easit skickade ingen adress för arbetsytan')), 15000);
+    try {
+      action.click();
+    } catch (error) {
+      finish(error);
+    }
+  });
+}
+
+async function runTabDestination(document, destination, signal) {
+  const page = document.defaultView;
+  const deadline = Date.now() + 15000;
+  async function waitFor(find) {
+    while (!signal.aborted && Date.now() < deadline) {
+      if (page.zk?.Widget && !page.zk.mounting) {
+        const result = find();
+        if (result) return result;
+      }
+      await new Promise(resolve => setTimeout(resolve, 75));
+    }
+    throw Error('Easits menyval blev inte tillgängligt');
+  }
+
+  async function openView(view) {
+    const find = () => findSidebarView(document, view);
+    const target = await waitFor(() => find() || (view.group &&
+      [...document.querySelectorAll('.menu-left .group-item[groupid]')].find(item => item.getAttribute('groupid') === view.group)));
+    if (target.matches(TAB_SIDEBAR_ROW)) target.click();
+    else {
+      target.click();
+      const row = await waitFor(find);
+      row.click();
+    }
+  }
+  if (destination.kind === 'row') {
+    if (destination.view) await openView(destination.view);
+    const row = await waitFor(() => {
+      const rows = findTabRows(document, destination.locator);
+      return rows.length === 1 ? rows[0] : null;
+    });
+    const cell = [...row.cells].find(item => item.getClientRects().length) || row.cells[0];
+    cell?.dispatchEvent(new page.MouseEvent('dblclick', {bubbles:true,cancelable:true,button:0,detail:2}));
+    return;
+  }
+  const trigger = await waitFor(() => document.querySelector(TAB_ADD_BUTTON));
+  if (trigger.getAttribute('openstate') !== 'true') trigger.click();
+  let popupId = trigger.getAttribute('aria-controls');
+  for (const [index, entry] of destination.path.entries()) {
+    const item = await waitFor(() => {
+      const popup = document.getElementById(popupId);
+      const list = popup?.querySelector(':scope > ul.z-menupopup-content') || document.getElementById(popupId + '-cave');
+      const candidates = [...(list?.children || [])].filter(node => node.matches('li:is(.z-menuitem,.z-menu):not(.z-menuitem-disabled)'));
+      if (entry.id) return candidates.find(node => node.getAttribute('testid') === entry.id);
+      const matching = candidates.filter(node => tabMenuItemLabel(node) === entry.label);
+      return matching.length === 1 ? matching[0] : null;
+    });
+    if (index === destination.path.length - 1) {
+      const action = item.querySelector(':scope > a.z-menuitem-content');
+      if (!action || action.matches('[disabled], [aria-disabled="true"]')) throw Error('Menyvalet saknar en åtgärd');
+      action.click();
+      return;
+    }
+    popupId = tabSubmenuId(item);
+    const popup = page.zk.Widget.$(item.id)?.menupopup;
+    if (popup?.open && !popup.isOpen?.()) popup.open();
+    else if (!popup) item.dispatchEvent(new page.MouseEvent('mouseenter'));
+  }
+}
+
+function initTabNavigation({window, document, globalThis, Element, MutationObserver}) {
+  const tabs = globalThis.EasitPlusTicketTabs;
+  if (!tabs) return;
+  const menu = document.createElement('div');
+  menu.className = 'easit-plus-tab-menu';
+  menu.setAttribute('data-easit-plus-addon', '');
+  menu.setAttribute('popover','manual');
+  menu.setAttribute('role','menu');
+  const action = document.createElement('button');
+  action.type = 'button';
+  action.setAttribute('role','menuitem');
+  menu.append(action);
+  let activate, returnFocus;
+
+  function hide(restoreFocus = false) {
+    if (!menu.matches(':popover-open')) return;
+    menu.hidePopover();
+    if (restoreFocus) returnFocus?.focus({preventScroll:true});
+    activate = returnFocus = null;
+  }
+
+  function show(x, y, callback) {
+    if (!tabs.enabled() || typeof menu.showPopover !== 'function') return false;
+    if (!menu.isConnected) document.body.append(menu);
+    hide();
+    activate = callback;
+    returnFocus = document.activeElement;
+    action.textContent = TICKET_TAB_TEXT;
+    menu.showPopover();
+    menu.style.left = Math.max(0, Math.min(x, window.innerWidth - menu.offsetWidth)) + 'px';
+    menu.style.top = Math.max(0, Math.min(y, window.innerHeight - menu.offsetHeight)) + 'px';
+    action.focus({preventScroll:true});
+    return true;
+  }
+
+  action.addEventListener('click', event => {
+    event.stopPropagation();
+    if (!tabs.enabled() || activate?.()) hide();
+    else action.textContent = 'Kunde inte öppna fliken';
+  });
+  window.addEventListener('pointerdown', event => {
+    if (event.target instanceof Element && !menu.contains(event.target)) hide();
+  }, true);
+  window.addEventListener('keydown', event => {
+    if (event.key !== 'Escape' || !menu.matches(':popover-open')) return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    hide(true);
+  }, true);
+  window.addEventListener('scroll', () => hide(), {passive:true});
+  globalThis.EasitPlusTabMenu = {show};
+  if (!tabs.openDestination) return;
+
+  const infoOwners = new WeakMap();
+  let infoObserver, infoDeadline;
+  function stopWaiting() {
+    infoObserver?.disconnect();
+    clearTimeout(infoDeadline);
+  }
+  window.addEventListener('click', event => {
+    const button = event.target instanceof Element && event.target.closest(TAB_INFO_BUTTON);
+    if (!button || !tabs.enabled()) return;
+    stopWaiting();
+    const old = new Set(document.querySelectorAll('.z-menupopup-open'));
+    infoObserver = new MutationObserver(() => {
+      const popup = findInformationPopup(document, button, old);
+      if (!popup) return;
+      stopWaiting();
+      infoOwners.set(popup, button);
+    });
+    infoObserver.observe(document, {subtree:true, childList:true, attributes:true, attributeFilter:['class','style']});
+    infoDeadline = setTimeout(stopWaiting, 8000);
+  }, true);
+
+  window.addEventListener('contextmenu', event => {
+    if (!tabs.enabled() || !(event.target instanceof Element)) return;
+    const item = event.target.closest('li.z-menuitem:not(.z-menuitem-disabled)');
+    const popup = item?.closest('.z-menupopup-open');
+    const destination = quickAddDestination(item, document);
+    let open = destination && (() => tabs.openDestination(destination));
+    if (!open && popup) {
+      const owner = infoOwners.get(popup) || siblingInformationButton(popup);
+      if (!owner?.isConnected || owner.disabled || owner.getAttribute('aria-disabled') === 'true' ||
+        !informationEntries(popup).includes(item)) return;
+      const section = informationSection(tabMenuItemLabel(item));
+      if (!section) return;
+      const label = owner.getAttribute('aria-label').replace(/\s*Visa information$/i, '').trim() || 'Information';
+      const entry = item.querySelector(':scope > a.z-menuitem-content');
+      open = () => tabs.openWorkspaceAction(entry, `${label} · ${section}`);
+    }
+    if (!open || !show(event.clientX, event.clientY, open)) return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+  }, true);
+  globalThis.EasitPlusSettings?.subscribe(() => {
+    if (tabs.enabled()) return;
+    stopWaiting();
+    hide();
+  });
+}
+
 function initContent({window, document, globalThis, Element, MutationObserver, getComputedStyle}) {
   const CELL = 'td.z-listcell, td.z-gridcell';
+  const TABLE = '.z-listbox, .z-grid';
   const OWN = '[data-easit-local-action]';
   const followup = globalThis.EasitPlusFollowup;
   const settings = globalThis.EasitPlusSettings;
+  const tabs = globalThis.EasitPlusTicketTabs;
+  const tabsEnabled = () => tabs?.enabled() === true;
   let context = null;
   const bindings = new WeakMap();
   const pending = new Set();
@@ -3081,23 +4140,138 @@ function initContent({window, document, globalThis, Element, MutationObserver, g
       .replace(/\u00a0/g, ' ').trim();
   }
 
-  function ticketLink(cell) {
-    const list=cell?.closest('.z-listbox, .z-grid');
+  function ticketFromCell(cell, inventory = false) {
+    const list=cell?.closest(TABLE);
     const row=cell?.closest('tr.z-listitem, tr.z-row');
-    if(!list || !row || row.closest('.z-listbox, .z-grid')!==list || !globalThis.EasitPlusScope?.isCell(cell)) return '';
-    const headers=[...list.querySelectorAll('.z-listheader, .z-column')].filter(node=>node.closest('.z-listbox, .z-grid')===list);
-    if(headers.length!==row.cells.length) return '';
-    const index=headers.findIndex(node=>(followup?.text(node)||node.textContent.trim()).toLocaleUpperCase('sv')==='ID');
-    if(index<0) return '';
-    const id=(followup?.text(row.cells[index])||row.cells[index].textContent.trim());
-    if(!/^\d+$/.test(id)) return '';
-    return `https://sjalvservice-it.norrkoping.se/openItem/moduleId/1003/sequenceId/${id}`;
+    if(!list || !row || row.closest(TABLE)!==list || list.closest('.easit-history-function')) return null;
+    const headers=[...list.querySelectorAll('.z-listheader, .z-column')].filter(node=>node.closest(TABLE)===list);
+    const text = node => node ? (followup?.text(node) || node.textContent.trim()) : '';
+    const names = headers.map(node => text(node).toLocaleUpperCase('sv').replace(/\s+/g, ' '));
+    const cells = [...row.cells].filter(node => node.matches(CELL));
+    function column(aliases) {
+      const index = names.findIndex(name => aliases.includes(name));
+      if (index < 0) return null;
+      const indexHint = headers[index].getAttribute('aria-colindex');
+      if (indexHint) {
+        const found = cells.find(node => node.getAttribute('aria-colindex') === indexHint);
+        if (found) return found;
+      }
+      if (names.length === row.cells.length) return row.cells[index];
+      return names.length === cells.length ? cells[index] : null;
+    }
+    const title = text(column(['RUBRIK', 'ÄRENDERUBRIK', 'NAMN', 'TITEL']));
+    const urls = new Set();
+    for (const link of row.querySelectorAll('a[href*="/openItem/moduleId/"][href*="/sequenceId/"]')) {
+      if (link.closest('tr.z-listitem, tr.z-row') !== row || link.closest(TABLE) !== list) continue;
+      const url = new URL(link.href);
+      if (url.origin !== window.location.origin || !/^\/openItem\/moduleId\/\d+\/sequenceId\/\d+\/?$/.test(url.pathname)) continue;
+      if (cell.contains(link)) return {url:url.href,title};
+      urls.add(url.href);
+    }
+    if (urls.size === 1) return {url:[...urls][0],title};
+    const id = row.getAttribute('data-sequence-id') || row.getAttribute('sequenceid') ||
+      text(column(['ID', 'ÄRENDE-ID', 'ÄRENDE ID', 'ÄRENDENUMMER', 'ÄRENDENR', 'ÄRENDENR.']));
+    const moduleId = row.getAttribute('data-module-id') || list.getAttribute('data-module-id') || (inventory ? '' : '1003');
+    if (!/^\d+$/.test(id) || !/^\d+$/.test(moduleId)) return null;
+    return {url:new URL(`/openItem/moduleId/${moduleId}/sequenceId/${id}`, window.location.origin).href,title};
+  }
+
+  function canOpenCell(selection) {
+    return selection?.row && selection.cell.isConnected && selection.cell.closest('tr') === selection.row;
+  }
+
+  function replayTarget(row, inventory) {
+    if (!tabsEnabled()) return null;
+    const list = row?.closest(TABLE);
+    const container = list?.closest('.eFormFunctionContainer, .easit-function');
+    const form = list?.closest(TICKET_FORM);
+    if (!list || list.closest('.easit-history-function') ||
+      !(inventory || container || form || list.closest('.z-panel'))) return null;
+    const locator = {container:container?.getAttribute('testid'), headers:JSON.stringify(tabTableHeaders(list)), cells:JSON.stringify(tabRowText(row))};
+    const label = tabRowText(row).find(text => /\p{L}/u.test(text)) || (inventory ? 'Inventarie' : 'Ärende');
+    if (findTabRows(document, locator).length !== 1) return null;
+    const ownerId = formTicketId(form);
+    const view = form ? null : sidebarDestination(document.querySelector(`${TAB_SIDEBAR_ROW}.selected-menu-item`));
+    const {pathname, search, href, origin} = window.location;
+    const isTicket = !inventory || document.querySelector('.navPath .modulePath')?.textContent.trim() === 'Ärende';
+    const url = /^\/openItem\/moduleId\/\d+\/sequenceId\/\d+\/?$/.test(pathname) ||
+      inventory && (pathname !== '/' || search) ? href :
+      ownerId && isTicket ? new URL(`/openItem/moduleId/1003/sequenceId/${ownerId}`, origin).href :
+      !form ? new URL('/', window.location.origin).href : '';
+    return url ? {kind:'row',label,locator,url,view} : null;
+  }
+
+  function openSelected(selected, list) {
+    if (!tabsEnabled() || !canOpenCell(selected)) return false;
+    if (selected.link) {
+      const current = ticketFromCell(selected.cell, selected.inventory);
+      return current?.url === selected.link && tabs.open(current.url, selected.ticket?.title || current.title);
+    }
+    const action = selected.inventory && list && nativeWorkspaceAction(list);
+    if (action) {
+      const title = selected.replay?.label || tabRowText(selected.row).find(text => /\p{L}/u.test(text)) || 'Inventarie';
+      return tabs.openWorkspaceAction(action, title);
+    }
+    const current = replayTarget(selected.row, selected.inventory);
+    return !!current && current.url === selected.replay?.url &&
+      current.locator.cells === selected.replay.locator.cells && tabs.openRow(current);
+  }
+
+  function nativeWorkspaceAction(list) {
+    for (const item of list.children) {
+      if (!item.matches(TAB_WORKSPACE_ITEM) && item.querySelector('.z-menuitem-text')?.textContent.trim() !== 'Öppna i ny arbetsyta') continue;
+      if (!item.matches('.z-menuitem-disabled, [disabled], [aria-disabled="true"]')) {
+        const action = item.querySelector(':scope > a.z-menuitem-content:not([disabled], [aria-disabled="true"])');
+        if (action) return action;
+      }
+    }
+    return null;
+  }
+
+  function nativeContextId(element) {
+    const widget = window.zk?.Widget;
+    if (!widget?.$) return '';
+    for (let owner = widget.$(element); owner; owner = owner.parent) {
+      const contextId = owner.getContext?.()?.split(',')[0].trim();
+      if (!contextId) continue;
+      const uuid = contextId.match(/^uuid\((.+)\)$/)?.[1];
+      return uuid || owner.$f?.(contextId, true)?.uuid || contextId;
+    }
+    return '';
   }
 
   function menuList(popup) {
     const list = popup.querySelector(':scope > ul.z-menupopup-content');
-    // Det stabila attributet identifierar huvudmenyn, inte undermenyer.
-    return list?.querySelector(':scope > [testid="pivl-open-item-in-new-workspace"]') ? list : null;
+    if (!list || popup.matches('.quick-add-menu')) return null;
+    if (list.querySelector(`:scope > ${TAB_WORKSPACE_ITEM}`)) return list;
+    if (popup.id && context?.popupId === popup.id) return list;
+    const hasWorkspaceAction = [...list.children].some(item =>
+      item.querySelector('.z-menuitem-text')?.textContent.trim() === 'Öppna i ny arbetsyta');
+    return hasWorkspaceAction && !context?.openPopups.has(popup) ? list : null;
+  }
+
+  function closeNativePopup(popup) {
+    const widget = window.zk?.Widget?.$?.(popup.id);
+    if (typeof widget?.close !== 'function') return false;
+    widget.close({sendOnOpen:true});
+    return true;
+  }
+
+  function closeSubmenus(list) {
+    for (const owner of list.querySelectorAll(':scope > li.z-menu')) {
+      const anchor = owner.querySelector(':scope > a.z-menu-content');
+      const popup = document.getElementById(anchor?.getAttribute('aria-owns') || owner.getAttribute('aria-owns') || '');
+      if (popup?.matches('.z-menupopup-open') || anchor?.getAttribute('aria-expanded') === 'true') {
+        const nested = popup?.querySelector(':scope > ul.z-menupopup-content');
+        if (nested) closeSubmenus(nested);
+        if (popup && !closeNativePopup(popup)) {
+          popup.classList.remove('z-menupopup-open');
+          popup.style.display = 'none';
+        }
+        anchor?.setAttribute('aria-expanded', 'false');
+      }
+      owner.classList.remove('z-menu-hover', 'z-menu-focus', 'z-menu-selected');
+    }
   }
 
   function setIcon(action, kind, pinned) {
@@ -3105,6 +4279,7 @@ function initContent({window, document, globalThis, Element, MutationObserver, g
     const variant = kind === 'pin' && pinned ? 'unpin' : kind;
     if (action.querySelector('svg')?.getAttribute('data-icon') === variant) return;
     const paths = {
+      tab: ['M4 5h16v14H4z', 'M4 9h16', 'M12 11.5v5m-2.5-2.5h5'],
       link: ['M10 13a5 5 0 0 0 7 .5l3-3a5 5 0 0 0-7-7l-2 2', 'M14 11a5 5 0 0 0-7-.5l-3 3a5 5 0 0 0 7 7l2-2'],
       mark: ['M21 11.5a8.4 8.4 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.4 8.4 0 0 1-3.8-.9L3 21l1.9-5.7a8.4 8.4 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.4 8.4 0 0 1 3.8-.9h.5a8.5 8.5 0 0 1 8 8v.5'],
       remove: ['M4 4h16v12H9l-5 4V4', 'M8 10h8'],
@@ -3126,13 +4301,14 @@ function initContent({window, document, globalThis, Element, MutationObserver, g
   function update(popup) {
     const list = menuList(popup);
     if (!list) return;
-    if (!context || !globalThis.EasitPlusScope?.isCell(context.cell) || !visible(popup) || !popup.classList.contains('z-menupopup-open')) {
+    if (!canOpenCell(context) || !visible(popup) || !popup.classList.contains('z-menupopup-open')) {
       list.querySelectorAll(`:scope > ${OWN}`).forEach(item => item.remove());return;
     }
     const config=settings.get();
     const ticket=context.ticket;
     const entries=[];
-    if(config.copyEnabled) {
+    if(tabsEnabled() && (context.link || context.replay || context.inventory && nativeWorkspaceAction(list))) entries.push(['tab',TICKET_TAB_TEXT,false]);
+    if(config.copyEnabled && context.scoped) {
       entries.push(['copy','Kopiera',!context.text]);
       entries.push(['link','Kopiera ärendelänk',!context.link]);
     }
@@ -3161,13 +4337,17 @@ function initContent({window, document, globalThis, Element, MutationObserver, g
       if(previous && previous.nextElementSibling!==item) previous.after(item);
       else if(!previous && list.firstElementChild!==item) list.prepend(item);
       previous=item;
-      setIcon(item.querySelector('a'), kind, ticket && followup?.getPinned(ticket.id));
+      const action = item.querySelector('a');
+      setIcon(action, kind, ticket && followup?.getPinned(ticket.id));
       if(bindings.get(item)!==context || item.dataset.followupState!==label) {
         bindings.set(item,context);item.dataset.followupState=label;
         item.querySelector('.z-menuitem-text').textContent=label;
         item.classList.toggle('z-menuitem-disabled',disabled);
-        item.querySelector('a').setAttribute('aria-disabled',String(disabled));
-        item.querySelector('a').title=kind==='copy' ? (disabled?'Cellen är tom':'Kopiera den högerklickade cellens text') : kind==='link' ? (disabled?'Saknar giltigt ärendenummer i ID-kolumnen':context.link) : 'Sparas endast lokalt';
+        action.setAttribute('aria-disabled',String(disabled));
+        if(kind==='copy') action.title=disabled?'Cellen är tom':'Kopiera den högerklickade cellens text';
+        else if(kind==='link') action.title=disabled?'Saknar giltigt ärendenummer i ID-kolumnen':context.link;
+        else if(kind==='tab') action.title=label;
+        else action.title='Sparas endast lokalt';
       }
     }
   }
@@ -3198,9 +4378,25 @@ function initContent({window, document, globalThis, Element, MutationObserver, g
       popup.removeAttribute('data-easit-plus-menu-closed');
     });
     const cell = event.target instanceof Element ? event.target.closest(CELL) : null;
-    context = cell && globalThis.EasitPlusScope?.isCell(cell) && visible(cell) ? {cell, text: cellText(cell), link:ticketLink(cell), ticket:followup?.readRow(cell.closest('tr.z-listitem'))} : null;
+    const scoped = cell && globalThis.EasitPlusScope?.isCell(cell);
+    const inventory = cell && isInventoryTable(cell.closest(TABLE));
+    const target = tabsEnabled() || scoped ? ticketFromCell(cell, inventory) : null;
+    const row = cell?.closest('tr.z-listitem, tr.z-row');
+    const replay = target ? null : replayTarget(row, inventory);
+    context = row && visible(cell) && (scoped || target || replay || inventory && tabsEnabled()) ? {
+      cell, row, scoped, inventory, text:scoped ? cellText(cell) : '', link:target?.url, replay,
+      popupId:nativeContextId(event.target),
+      ticket:scoped ? followup?.readRow(row) : null,
+      openPopups:new Set(document.querySelectorAll('.z-menupopup-open'))
+    } : null;
     queueMenus();
   }, {capture: true, passive: true});
+  window.addEventListener('contextmenu', event => {
+    const selected = context;
+    if (!(selected?.link || selected?.replay) || !tabsEnabled() || selected.popupId || event.defaultPrevented) return;
+    if ([...document.querySelectorAll('.z-menupopup-open')].some(popup => visible(popup) && menuList(popup))) return;
+    if (globalThis.EasitPlusTabMenu?.show(event.clientX, event.clientY, () => openSelected(selected))) event.preventDefault();
+  });
   window.addEventListener('pointerdown', event => {
     if (!(event.target instanceof Element) || event.target.closest('.z-menupopup')) return;
     clear();
@@ -3211,24 +4407,31 @@ function initContent({window, document, globalThis, Element, MutationObserver, g
 
   async function activate(item) {
     const selected=bindings.get(item);
-    if(!selected || selected!==context || !globalThis.EasitPlusScope?.isCell(selected.cell) || item.querySelector('a').getAttribute('aria-disabled')==='true') return;
+    if(!selected || selected!==context || !canOpenCell(selected) || item.querySelector('a').getAttribute('aria-disabled')==='true') return;
     try {
       const kind=item.dataset.easitLocalAction;
       if(kind==='copy') await globalThis.EasitPlusFeedback.copyText(selected.text);
       else if(kind==='link') {
-        const link=ticketLink(selected.cell);
+        const link=ticketFromCell(selected.cell,selected.inventory)?.url;
         if(!link || link!==selected.link) throw new Error('Ärenderaden har ändrats');
         await globalThis.EasitPlusFeedback.copyText(link);
       }
+      else if(kind==='tab' && !openSelected(selected,item.parentElement)) throw new Error('Arbetsytan är inte tillgänglig');
       else if(kind==='pin') await followup.pin(selected.ticket.id,selected.ticket);
       if(context===selected) {
-        item.closest('.z-menupopup')?.setAttribute('data-easit-plus-menu-closed','');
+        const popup = item.closest('.z-menupopup');
+        if (popup) {
+          closeSubmenus(item.parentElement);
+          if (!closeNativePopup(popup)) popup.setAttribute('data-easit-plus-menu-closed','');
+        }
         clear();
       }
       if(kind==='note') followup.editNote(selected.ticket);
     } catch {
-      if(context===selected) item.querySelector('.z-menuitem-text').textContent=
-        ['copy','link'].includes(item.dataset.easitLocalAction)?'Kunde inte kopiera':'Kunde inte spara markeringen';
+      if(context!==selected) return;
+      const kind = item.dataset.easitLocalAction;
+      item.querySelector('.z-menuitem-text').textContent =
+        kind==='tab' ? 'Kunde inte öppna fliken' : ['copy','link'].includes(kind)?'Kunde inte kopiera':'Kunde inte spara markeringen';
     }
   }
 
@@ -3238,10 +4441,17 @@ function initContent({window, document, globalThis, Element, MutationObserver, g
     window.addEventListener(type, event => {
       const item = event.target instanceof Element ? event.target.closest(OWN) : null;
       if (!item) return;
+      if (type === 'mouseover' && !(event.relatedTarget instanceof Element && item.contains(event.relatedTarget))) {
+        closeSubmenus(item.parentElement);
+      }
       event.stopImmediatePropagation();
       if (type === 'click') {event.preventDefault(); activate(item);}
     }, true);
   }
+  window.addEventListener('focusin', event => {
+    const item = event.target instanceof Element ? event.target.closest(OWN) : null;
+    if (item) closeSubmenus(item.parentElement);
+  }, true);
   window.addEventListener('keydown', event => {
     const item = event.target instanceof Element ? event.target.closest(OWN) : null;
     if (!item || !['Enter', ' '].includes(event.key)) return;
@@ -3722,10 +4932,13 @@ function initIcon({globalThis}) {
 
 /* Mount the Easit+ panel beside the global search. */
 function initHeaderPopup({window, document, globalThis, MutationObserver, requestAnimationFrame}) {
-  if (window !== window.top || globalThis.EasitPlusHeaderPopup) return;
-  globalThis.EasitPlusHeaderPopup = true;
+  const ticketFrame = window === window.top ? null : window.frameElement;
+  if (globalThis.EasitPlusHeaderPopup ||
+    (window !== window.top && !ticketFrame?.classList.contains('easit-plus-ticket-frame'))) return;
+  globalThis.EasitPlusHeaderPopup = {toggleFrom, close};
   const SEARCH = '.search-container .super-search';
   let search = null, host = null, button = null, canvas = null, layer = null, panel = null, frame = null;
+  let anchor = null, anchorFrame = null, opener = null;
   let popupView, pendingNotes = false;
   let queued = false, stopped = false, opened = false, frameReady = false, requestId = 0;
 
@@ -3746,20 +4959,26 @@ function initHeaderPopup({window, document, globalThis, MutationObserver, reques
   }
   function position() {
     if (!panel || !opened) return;
-    const rect = host?.getBoundingClientRect() ?? {left:8,bottom:0};
+    const rect = anchor?.getBoundingClientRect() ?? {left:8,bottom:0};
+    const offset = anchorFrame?.getBoundingClientRect() ?? {left:0,top:0};
     const width = Math.min(390, window.innerWidth - 16);
     const height = Math.min(600, Math.max(120, window.innerHeight - 16));
     panel.style.width = width + 'px'; panel.style.height = height + 'px';
-    panel.style.left = Math.max(8, Math.min(rect.left, window.innerWidth - width - 8)) + 'px';
-    panel.style.top = Math.max(8, Math.min(rect.bottom + 8, window.innerHeight - height - 8)) + 'px';
+    panel.style.left = Math.max(8, Math.min(offset.left + rect.left, window.innerWidth - width - 8)) + 'px';
+    panel.style.top = Math.max(8, Math.min(offset.top + rect.bottom + 8, window.innerHeight - height - 8)) + 'px';
   }
   function close(focus = true) {
     opened = false; requestId++;
     try {if(frameReady)frame?.contentWindow.postMessage({type:'easit-plus-popup-hidden'},site);}catch{/* Context invalidated. */}
     if (panel?.matches(':popover-open')) panel.hidePopover();
-    button?.setAttribute('aria-expanded', 'false');
-    button?.removeAttribute('aria-busy');
-    if (focus && host?.isConnected) button?.focus();
+    opener?.setAttribute('aria-expanded', 'false');
+    opener?.removeAttribute('aria-busy');
+    if (anchorFrame) {
+      anchor?.ownerDocument.removeEventListener('pointerdown', outside, true);
+      anchor?.ownerDocument.removeEventListener('keydown', escape, true);
+    }
+    if (focus && anchor?.isConnected) opener?.focus();
+    anchor = anchorFrame = opener = null;
   }
   function destroyPopup() {
     popupView?.dispose(); close(false); frameReady = false; layer?.remove(); layer = panel = frame = null;
@@ -3770,7 +4989,7 @@ function initHeaderPopup({window, document, globalThis, MutationObserver, reques
     frame.contentWindow.postMessage({type:'easit-plus-popup-prepare', requestId:next}, site);
   }
   function prepare() {
-    if (stopped) return;
+    if (stopped || ticketFrame) return;
     if (panel) return;
     // A high z-index inside the header cannot escape its stacking/clip context.
     // Use a separate root and the browser's non-modal top layer instead.
@@ -3791,16 +5010,29 @@ function initHeaderPopup({window, document, globalThis, MutationObserver, reques
     panel.append(frame); root.append(style, panel); isolate(root);
     (document.body || document.documentElement).append(layer);
   }
-  function toggle() {
+  function toggleFrom(target, sourceFrame = null) {
     if (stopped) return;
-    if (opened) {close(); return;}
+    if (ticketFrame) {
+      ticketFrame.dispatchEvent(new window.CustomEvent(TICKET_POPUP_OPEN, {detail:target}));
+      return;
+    }
+    if (opened && target === anchor) {close(); return;}
+    if (opened) close(false);
+    anchor = target; anchorFrame = sourceFrame;
+    opener = anchor?.shadowRoot?.querySelector('button') || null;
+    if (anchorFrame) {
+      anchor.ownerDocument.addEventListener('pointerdown', outside, true);
+      anchor.ownerDocument.addEventListener('keydown', escape, true);
+    }
     prepare(); opened = true;
-    button.setAttribute('aria-expanded', 'true'); button.setAttribute('aria-busy', 'true');
+    opener?.setAttribute('aria-expanded', 'true');
+    opener?.setAttribute('aria-busy', 'true');
     requestReady();
   }
   globalThis.openChangelog = () => {
       pendingNotes = true;
       if (!opened) {
+        anchor = host; opener = button;
         prepare(); opened = true;
         button?.setAttribute('aria-expanded','true');
       }
@@ -3809,7 +5041,7 @@ function initHeaderPopup({window, document, globalThis, MutationObserver, reques
     function outside(event) {
     if (!opened) return;
     const path = event.composedPath();
-    if (!path.includes(host) && !path.includes(layer)) close(false);
+    if (!path.includes(anchor) && !path.includes(layer)) close(false);
   }
   function escape(event) {
     if (opened && event.key === 'Escape') {event.preventDefault(); event.stopImmediatePropagation(); close();}
@@ -3824,14 +5056,14 @@ function initHeaderPopup({window, document, globalThis, MutationObserver, reques
       frameReady = false;
       requestId++;
       if (panel.matches(':popover-open')) panel.hidePopover();
-      if (opened) button.setAttribute('aria-busy', 'true');
+      if (opened) opener?.setAttribute('aria-busy', 'true');
       return;
     }
     if (event.data?.type === 'easit-plus-popup-close') {if (opened) close(); return;}
     if (event.data?.type === 'easit-plus-popup-ready' && opened && event.data.requestId === requestId) {
       position();
       if (!panel.matches(':popover-open')) panel.showPopover();
-      button?.removeAttribute('aria-busy'); frame.focus(); if (pendingNotes) { pendingNotes = false; popupView.openNotes(); }
+      opener?.removeAttribute('aria-busy'); frame.focus(); if (pendingNotes) { pendingNotes = false; popupView.openNotes(); }
     }
   }
   function mount() {
@@ -3839,9 +5071,10 @@ function initHeaderPopup({window, document, globalThis, MutationObserver, reques
     if (stopped) return;
     const next = document.querySelector(SEARCH);
     if (next === search && host?.isConnected && host.nextSibling === search) return;
-    close(false); host?.remove(); search?.parentElement?.classList.remove('easit-plus-search-container');
+    if (anchor === host) close(false);
+    host?.remove(); search?.parentElement?.classList.remove('easit-plus-search-container');
     search = next;
-    if (!search) {destroyPopup(); return;}
+    if (!search) {if (!anchorFrame) destroyPopup(); return;}
     host = document.createElement('easit-plus-header');
     host.setAttribute('data-easit-plus-addon', ''); host.setAttribute('data-easit-plus-local-ui', '');
     const root = host.attachShadow({mode:'open'}), style = document.createElement('style');
@@ -3856,7 +5089,7 @@ function initHeaderPopup({window, document, globalThis, MutationObserver, reques
     button.setAttribute('aria-label', 'Öppna Easit+'); button.setAttribute('aria-haspopup', 'dialog');
     button.setAttribute('aria-expanded', 'false');
     canvas = document.createElement('canvas'); canvas.width = canvas.height = 64; canvas.setAttribute('aria-hidden','true');
-    button.append(canvas); button.addEventListener('click', event => {event.stopPropagation(); toggle();});
+    button.append(canvas); button.addEventListener('click', event => {event.stopPropagation(); toggleFrom(host);});
     button.addEventListener('pointerenter', prepare); button.addEventListener('focus', prepare);
     isolate(root);
     root.append(style, button); search.parentElement.classList.add('easit-plus-search-container');
@@ -4650,7 +5883,7 @@ function initThemePresets({globalThis, api}) {
       const value=normalize(Object.fromEntries(keys.map(key=>[key,settings[key]])));
       if(key!==null&&(!validKey(key)||!records.has(key)))throw new Error('Temat finns inte längre.');
       key??=PREFIX+crypto.randomUUID();
-      await api.local.set({[key]:value,...(activate?{easitPlusSettingsV1:globalThis.EasitPlusSettings.normalize({...settings,...value})}:{})});
+      await api.local.set({[key]:value,...(activate?{easitPlusSettingsV1:globalThis.EasitPlusSettings.normalize({...settings,...value})}:{})},{endThemePreview:activate});
       receive(key,value);emit();
     },
     remove:async key=>{
@@ -5009,7 +6242,7 @@ function initPopup({window, document, globalThis, api, postToHeader, reloadPopup
     const brand=document.querySelector('.brand-icon');
     brand.style.background=globalThis.EasitPlusIcon.color(value);
     brand.style.color=globalThis.EasitPlusIcon.foreground(globalThis.EasitPlusIcon.color(value));
-    for (const key of ['groupingEnabled', 'firstLineWorkloadEnabled', 'mailUnreadEnabled', 'actionsUndoEnabled', 'loadingEnabled', 'snippetPickerEnabled']) document.getElementById(key).checked = value[key];
+    for (const key of ['ticketTabsEnabled', 'groupingEnabled', 'firstLineWorkloadEnabled', 'mailUnreadEnabled', 'actionsUndoEnabled', 'loadingEnabled', 'snippetPickerEnabled']) document.getElementById(key).checked = value[key];
     document.getElementById('snippetPickerTrigger').value=value.snippetPickerTrigger;
     document.getElementById('snippetPickerTrigger').disabled=!value.snippetPickerEnabled;
     const colors=themeDraft||value;
@@ -5027,8 +6260,8 @@ function initPopup({window, document, globalThis, api, postToHeader, reloadPopup
     saving=true;
     let failed=false;
     while(queuedValue) {
-      const value=queuedValue;queuedValue=null;
-      try {await settings.save(value);failed=false;}
+      const {value,applyTheme}=queuedValue;queuedValue=null;
+      try {await settings.save(value,applyTheme);failed=false;}
       catch(error) {failed=error.message||'Kunde inte spara inställningarna.';}
     }
     saving=false;settings.clearPreview();show();
@@ -5036,16 +6269,16 @@ function initPopup({window, document, globalThis, api, postToHeader, reloadPopup
     message.textContent=lastSaveError;
     if(failed&&!document.getElementById('appearancePanel').hidden)document.getElementById('themeMessage').textContent=failed;
   }
-  function save(value) {
+  function save(value,applyTheme=false) {
     if (deletingData) return;
-    queuedValue=value;
-    settings.preview(value);
+    queuedValue={value,applyTheme};
+    if(applyTheme)settings.preview(value);
     message.textContent='';
     if(!saving)drainPromise=drainSaves();
   }
   function readFields() {
     const value={...settings.saved()};
-    for(const key of ['groupingEnabled','firstLineWorkloadEnabled','mailUnreadEnabled','actionsUndoEnabled','loadingEnabled','snippetPickerEnabled'])value[key]=document.getElementById(key).checked;
+    for(const key of ['ticketTabsEnabled','groupingEnabled','firstLineWorkloadEnabled','mailUnreadEnabled','actionsUndoEnabled','loadingEnabled','snippetPickerEnabled'])value[key]=document.getElementById(key).checked;
     value.snippetPickerTrigger=document.getElementById('snippetPickerTrigger').value;
     for(const key of ['loadingDismissSeconds','loadingShowAfterSeconds'])value[key]=document.getElementById(key).valueAsNumber;
     return value;
@@ -5059,7 +6292,7 @@ function initPopup({window, document, globalThis, api, postToHeader, reloadPopup
 
   document.querySelector('#reset').addEventListener('click', async () => {
     const reset=document.getElementById('reset');reset.disabled=true;
-    try {await drainPromise;await globalThis.EasitPlusScope?.resetGrouping();await api.local.remove(['easitPlusFirstLineExcludedV1','easitPlusFirstLineExcludedTodayV1']);save(settings.defaults());}
+    try {await drainPromise;await globalThis.EasitPlusScope?.resetGrouping();await api.local.remove(['easitPlusFirstLineExcludedV1','easitPlusFirstLineExcludedTodayV1']);save(settings.defaults(),true);}
     catch {message.textContent='Kunde inte återställa inställningarna.';}
     finally {reset.disabled=false;}
   });
@@ -5184,7 +6417,7 @@ function initPopup({window, document, globalThis, api, postToHeader, reloadPopup
       preview.disabled=themeBusy;
       preview.addEventListener('click',()=>changeTheme(item,index,async()=>{
         await drainPromise;
-        save({...settings.saved(),...themes.values(item)});
+        save({...settings.saved(),...themes.values(item)},true);
         await drainPromise;
         if(message.textContent)throw new Error(message.textContent);
         themeMessage.textContent='Temat används.';
@@ -5661,6 +6894,10 @@ for (const group of partitions) {
 const prefix = 'Easit+ ' + GM_info.uuid + ' ';
 const revisionKey = 'userscriptStorageRevision';
 const watermark = prefix + revisionKey;
+const settingsKey = 'easitPlusSettingsV1';
+const themeKeys = ['themeEnabled', 'themeColor', 'secondaryThemeEnabled', 'secondaryThemeColor', 'secondaryThemeTextMode', 'secondaryThemeWhiteText', 'snowfallEnabled'];
+const previewKey = 'easitPlusThemePreviewV1';
+const previewOwner = 'userscriptPreviewOwner';
 const joined = navigator.locks.request(prefix + 'join', async () => {
   const first = await navigator.locks.request(prefix + 'active', {ifAvailable:true}, lock => !!lock);
   if (first) localStorage.removeItem(watermark);
@@ -5704,8 +6941,9 @@ async function updateGroups(edit) {
       const name = partition(key);
       return updates[name] ??= GM_getValue(name, {});
     }
-    edit(groupFor);
-    if (Object.keys(updates).length) await commitGroups(updates);
+    const result = edit(groupFor);
+    if (result !== false && Object.keys(updates).length) await commitGroups(updates);
+    return result;
   });
 }
 const local = {
@@ -5718,9 +6956,26 @@ const local = {
     }
     return result;
   },
-  set(values) {
+  set(values, {preserveTheme = false, endThemePreview = false} = {}) {
     return updateGroups(groupFor => {
+      if (values[settingsKey]) {
+        const preferences = groupFor(settingsKey), previous = preferences[settingsKey];
+        let next = values[settingsKey];
+        if (preserveTheme && previous) {
+          next = {...next};
+          for (const key of themeKeys) {
+            if (Object.hasOwn(previous, key)) next[key] = previous[key];
+            else delete next[key];
+          }
+          values = {...values, [settingsKey]:next};
+        } else if (endThemePreview || themeKeys.some(key => previous?.[key] !== next[key])) {
+          // Revoke the editor in the same update as the saved theme.
+          delete preferences[previewOwner];
+          delete preferences[previewKey];
+        }
+      }
       for (const [key, value] of Object.entries(values)) groupFor(key)[key] = value;
+      return values;
     });
   },
   remove(keys) {
@@ -5733,14 +6988,13 @@ const local = {
 const site = 'https://sjalvservice-it.norrkoping.se';
 const messageHandlers = eventList();
 const loadMessages = eventList();
-const previewKey = 'easitPlusThemePreviewV1';
-const previewOwner = 'userscriptPreviewOwner';
 const lifetimeName = token => 'Easit+ preview session ' + token;
 function clearPreview(token) {
-  return locked('preview', async () => {
-    if ((await local.get(previewOwner))[previewOwner] === token) {
-      await local.remove([previewOwner, previewKey]);
-    }
+  return updateGroups(groupFor => {
+    const preferences = groupFor(previewOwner);
+    if (preferences[previewOwner] !== token) return false;
+    delete preferences[previewOwner];
+    delete preferences[previewKey];
   });
 }
 // A browser lock is released even when a tab is discarded without pagehide.
@@ -5748,10 +7002,9 @@ async function watchPreview(token) {
   if (typeof token === 'string') await navigator.locks.request(lifetimeName(token), () => clearPreview(token));
 }
 if (unsafeWindow === unsafeWindow.top) {
-  storageChanges.addListener(changes => {
-    if (changes[previewOwner]?.newValue) void watchPreview(changes[previewOwner].newValue);
-  });
-  void local.get(previewOwner).then(data => watchPreview(data[previewOwner]));
+  const watchOwner = token => { void watchPreview(token).catch(() => {}); };
+  storageChanges.addListener(changes => watchOwner(changes[previewOwner]?.newValue));
+  void locked('storage', () => local.get(previewOwner)).then(data => watchOwner(data[previewOwner])).catch(() => {});
 }
 function previewPort() {
   const token = crypto.randomUUID(), onDisconnect = eventList(), onMessage = eventList();
@@ -5760,21 +7013,26 @@ function previewPort() {
   let ready;
   const acquired = new Promise(resolve => { ready = resolve; });
   void navigator.locks.request(lifetimeName(token), async () => { ready(); await lifetime; });
-  const claimed = acquired.then(() => locked('preview', () => local.set({[previewOwner]:token})));
+  const claimed = acquired.then(() => updateGroups(groupFor => {
+    if (closed) return false;
+    const preferences = groupFor(previewOwner);
+    preferences[previewOwner] = token;
+    delete preferences[previewKey];
+  }));
   return {
     onMessage, onDisconnect,
     postMessage({values}) {
       if (closed || !values) return;
-      void claimed.then(() => locked('preview', async () => {
-        if (!closed && (await local.get(previewOwner))[previewOwner] === token) {
-          await local.set({[previewKey]:values});
-        }
+      void claimed.then(() => updateGroups(groupFor => {
+        const preferences = groupFor(previewOwner);
+        if (closed || preferences[previewOwner] !== token) return false;
+        preferences[previewKey] = {...values, owner:token};
       })).catch(() => onMessage.emit({error:'Kunde inte förhandsvisa temat.'}));
     },
     disconnect() {
       if (closed) return;
       closed = true;
-      void claimed.finally(release);
+      void claimed.then(() => clearPreview(token)).then(release, release);
       onDisconnect.emit();
     }
   };
@@ -5808,6 +7066,7 @@ function platform(isPopup, cleanup) {
   }
   return {
     local, changes:onChanged, messages:loadMessages, send, preview,
+    readSettings:() => locked('storage', () => local.get(null)),
     clearTiming:() => network?.clear(),
     openTicket(url) {
       if (new URL(url).origin !== site) throw Error('Ogiltig ärendelänk.');
@@ -5819,12 +7078,58 @@ function platform(isPopup, cleanup) {
 // The page's requests remain owned by Easit. Only classification and timing
 // cross frame boundaries. Never send a URL, payload, cookie or response body.
 const timingChannel = 'easit-plus-userscript-timing-v1';
+function ticketFrameFor(page) {
+  try {
+    while (page && page !== page.top) {
+      const frame = page.frameElement;
+      if (!frame) break;
+      if (frame.classList.contains('easit-plus-ticket-frame')) return frame;
+      page = page.parent;
+    }
+  } catch { /* An unrelated cross-origin frame cannot be attributed. */ }
+  return null;
+}
+function timingWorkspace(page) {
+  return page ? ticketFrameFor(page)?.dataset.easitPlusTabId || 'home' : null;
+}
+
+function classifyAuRequest(fields) {
+  const commands = [];
+  let namespace = '';
+  for (const [key] of fields) if (key.endsWith('dtid')) { namespace = key.slice(0, -4); break; }
+  for (const [key, name] of fields) {
+    if (!key.startsWith(namespace) || !/^cmd_\d+$/.test(key.slice(namespace.length))) continue;
+    const data = name === 'echo' ? fields.get(namespace + 'data_' + key.slice(namespace.length + 4)) : '';
+    let openItem = false;
+    if (data) {
+      try {
+        const payload = JSON.parse(data);
+        const args = Array.isArray(payload) ? payload : payload?.[''];
+        openItem = args?.[0] === 'onOpenItem';
+      } catch { /* Unknown AU payload. */ }
+    }
+    commands.push({name,openItem});
+  }
+  const maintenance = ['dummy','onTimer','onClientInfo','onVisibilityChange'];
+  if (commands.length && commands.every(command => maintenance.includes(command.name))) return null;
+  const click = commands.some(({name,openItem}) => openItem || name === 'onClick' || name === 'onDoubleClick');
+  return {click, selection:!click && commands.some(({name}) => name === 'onSelect')};
+}
+
 function observeRequests(page) {
   const frame = crypto.randomUUID();
   const transmit = (phase, extra = {}) => {
-    const event = {channel:timingChannel, frame, phase, at:Date.now(), ...extra};
-    if (page === page.top) network?.receive(event);
-    else page.top.postMessage(event, site);
+    const event = {frame, phase, at:Date.now(), ...extra};
+    if (page === page.top) network?.receive(event, 'home');
+    else {
+      // Deliver synchronously while the source document still belongs to its frame.
+      try {
+        const top = page.top;
+        if (top?.location.origin === site) top.dispatchEvent(new top.CustomEvent(timingChannel, {
+          detail:{event, source:page.document}
+        }));
+      } catch { /* A frame on another origin has no local timing receiver. */ }
+    }
   };
   function isZkPost(address, method) {
     return address.origin === site && /(?:^|\/)zkau(?:[/;]|$)/.test(address.pathname) && method?.toUpperCase() === 'POST';
@@ -5834,37 +7139,33 @@ function observeRequests(page) {
     try { address = new URL(url, page.document.baseURI); } catch { return; }
     if (address.origin !== site) return;
     const id = crypto.randomUUID(), at = Date.now();
+    if (!isZkPost(address, method)) {
+      transmit('begin', {id, at});
+      return () => transmit('finish', {id});
+    }
     function begin(fields) {
       // Multipart ZK uploads put the encoded AU fields in "data" next to
       // attachments. Only inspect the string form field, never the files.
       const encoded = fields instanceof page.FormData && fields.get('data');
       if (typeof encoded === 'string') fields = new URLSearchParams(encoded);
-      const commands = [];
-      let namespace = '';
-      for (const [key] of fields) if (key.endsWith('dtid')) { namespace = key.slice(0, -4); break; }
-      for (const [key, value] of fields) {
-        if (key.startsWith(namespace) && /^cmd_\d+$/.test(key.slice(namespace.length))) commands.push(value);
-      }
-      if (commands.length && commands.every(value => value === 'dummy')) return false;
-      const selection = commands.includes('onSelect');
-      transmit('begin', {id, at, click:!selection && commands.includes('onClick'), selection});
+      const activity = classifyAuRequest(fields);
+      if (!activity) return false;
+      transmit('begin', {id, at, ...activity});
       return true;
     }
     let fields = [];
-    if (isZkPost(address, method)) {
-      if (typeof body === 'string') fields = new URLSearchParams(body);
-      else if (body instanceof page.URLSearchParams || body instanceof page.FormData) fields = body;
-      else if (ArrayBuffer.isView(body) || body instanceof page.ArrayBuffer) {
-        fields = new URLSearchParams(new TextDecoder().decode(body));
-      } else if (body instanceof page.Blob || body instanceof page.Request) {
-        const reading = body instanceof page.Request && /^multipart\/form-data/i.test(body.headers.get('Content-Type') || '')
-          ? body.formData() : body.text().then(text => new URLSearchParams(text));
-        const begun = reading.then(begin, () => begin([]));
-        return () => {
-          const ended = Date.now();
-          void begun.then(active => { if (active) transmit('finish', {id, at:ended}); });
-        };
-      }
+    if (typeof body === 'string') fields = new URLSearchParams(body);
+    else if (body instanceof page.URLSearchParams || body instanceof page.FormData) fields = body;
+    else if (ArrayBuffer.isView(body) || body instanceof page.ArrayBuffer) {
+      fields = new URLSearchParams(new TextDecoder().decode(body));
+    } else if (body instanceof page.Blob || body instanceof page.Request) {
+      const reading = body instanceof page.Request && /^multipart\/form-data/i.test(body.headers.get('Content-Type') || '')
+        ? body.formData() : body.text().then(text => new URLSearchParams(text));
+      const begun = reading.then(begin, () => begin([]));
+      return () => {
+        const ended = Date.now();
+        void begun.then(active => { if (active) transmit('finish', {id, at:ended}); });
+      };
     }
     if (begin(fields)) return () => transmit('finish', {id});
   }
@@ -5956,39 +7257,58 @@ function observeRequests(page) {
     if (event.target.localName === 'script') attachAuFetch();
   }, true);
   page.addEventListener('click', attachAuFetch, {capture:true, passive:true});
+  page.addEventListener('load', attachAuFetch, {once:true});
   page.addEventListener('pagehide', () => {
     for (const queue of transfers.values()) for (const item of [...queue]) item.done();
     transmit('clear');
   });
 }
-function measure(loadCycle, history) {
-  const tab = crypto.getRandomValues(new Uint32Array(1))[0];
+function measure(loadCycle, history, page = window) {
   const state = loadCycle.create();
-  let revision = 0, timer;
-  function snapshot(finished = null, cancelled = false) {
-    const cycle = state.cycles.get(tab);
-    return {type:'easit-plus-click-loading-v2', revision, at:Date.now(), finished, cancelled,
-      cycle:cycle ? {...cycle, iconPending:cycle.source === 'icon' && !!state.icons.get(tab)?.busy} : null,
-      requests:cycle ? state.requestsFor(tab).map(({id, startedAt}) => ({id, startedAt})) : []};
+  const timers = new Map();
+  const completed = new Map(), dismissed = new Map();
+  const workspaces = new Set(['home']);
+  const frameSources = new WeakMap();
+  let revision = 0, active = 'home';
+  function snapshot() {
+    const at = Date.now(), openCycle = state.cycles.get(active);
+    const cycle = openCycle && openCycle.id !== dismissed.get(active) ? openCycle : null;
+    const result = completed.get(active);
+    const finished = result && {id:result.id, startedAt:result.startedAt, endedAt:result.endedAt,
+      visibleMs:result.visibleMs + (result.visibleSince === null ? 0 : at - result.visibleSince)};
+    return {type:'easit-plus-click-loading-v2', revision, at, workspace:active, finished:finished ?? null,
+      cycle:cycle ? {...cycle, iconPending:cycle.source === 'icon' && !!state.icons.get(active)?.busy} : null,
+      requests:cycle ? state.requestsFor(active).map(({id, startedAt}) => ({id, startedAt})) : []};
   }
-  function publish(finished, cancelled) {
+  function publish() {
     revision++;
-    loadMessages.emit(snapshot(finished, cancelled));
+    loadMessages.emit(snapshot());
   }
-  function settle() {
-    clearTimeout(timer);
+  function clearTimer(tab) {
+    clearTimeout(timers.get(tab));
+    timers.delete(tab);
+  }
+  function settle(tab) {
+    clearTimer(tab);
+    if (state.cycles.has(tab)) completed.delete(tab);
     const until = state.settle(tab, Date.now());
     if (until === null) return;
-    timer = setTimeout(() => {
+    timers.set(tab, setTimeout(() => {
+      timers.delete(tab);
       const cycle = state.cycles.get(tab);
       if (!cycle || state.waiting(tab)) return;
       const finished = {id:cycle.id, startedAt:cycle.startedAt, endedAt:cycle.lastAt};
       state.cycles.delete(tab);
-      publish(finished);
+      if (dismissed.get(tab) !== cycle.id) {
+        completed.set(tab, {...finished, visibleMs:0, visibleSince:active === tab ? Date.now() : null});
+      }
+      dismissed.delete(tab);
+      if (active === tab) publish();
       void locked('history', () => history.record(finished, cycle.source)).catch(() => console.warn('Easit+: kunde inte spara laddtiden.'));
-    }, Math.max(0, until - Date.now()));
+    }, Math.max(0, until - Date.now())));
   }
-  function receive(event) {
+  function receive(event, tab) {
+    if (!workspaces.has(tab)) return;
     const {phase, frame, id, at} = event;
     if (typeof frame !== 'string' || frame.length > 64 || !Number.isFinite(at)) return;
     if (phase === 'clear') {
@@ -5998,18 +7318,85 @@ function measure(loadCycle, history) {
       if (phase === 'begin') {
         const selection = event.selection === true;
         const result = state.begin({id, tabId:tab, frameId:frame, startedAt:at, selection}, event.click === true, selection);
-        if (result.cancelled) { clearTimeout(timer); publish(null, true); return; }
+        if (result.cancelled) {
+          clearTimer(tab);
+          dismissed.delete(tab);
+          if (active === tab) publish();
+          return;
+        }
       } else if (phase !== 'finish' || state.finish(id, at) === null) return;
     }
-    if (state.cycles.has(tab)) { settle(); publish(); }
+    if (state.cycles.has(tab)) {
+      settle(tab);
+      if (active === tab) publish();
+    }
   }
-  window.addEventListener('message', event => {
-    if (event.origin === site && event.data?.channel === timingChannel) receive(event.data);
+  function attached(source) {
+    try {
+      const view = source?.defaultView;
+      if (!view || view === page || view.top !== page || view.document !== source || view.location.origin !== site) return false;
+      for (let current = view; current !== page; current = current.parent) {
+        if (!current.frameElement?.isConnected) return false;
+      }
+      return true;
+    } catch { return false; }
+  }
+  page.addEventListener(timingChannel, message => {
+    const {event, source} = message.detail ?? {};
+    if (!event || !attached(source)) return;
+    const tab = timingWorkspace(source.defaultView);
+    if (event.phase === 'begin') frameSources.set(source, {frame:event.frame, tab});
+    if (event.phase === 'clear') frameSources.delete(source);
+    receive(event, tab);
   });
-  return {receive, clear() { clearTimeout(timer); state.clear(tab); publish(null, true); },
+  return {
+    receive,
+    detach(source) {
+      const entry = frameSources.get(source);
+      if (!entry || attached(source)) return;
+      frameSources.delete(source);
+      receive({phase:'clear',frame:entry.frame,at:Date.now()}, entry.tab);
+    },
+    startOpen(tab) {
+      workspaces.add(tab);
+      const id = crypto.randomUUID(), frame = 'navigation';
+      receive({phase:'begin',frame,id,at:Date.now(),click:true}, tab);
+      return () => receive({phase:'finish',frame,id,at:Date.now()}, tab);
+    },
+    select(tab) {
+      workspaces.add(tab);
+      if (tab === active) return;
+      const now = Date.now(), previous = completed.get(active);
+      if (previous && previous.visibleSince !== null) {
+        previous.visibleMs += now - previous.visibleSince;
+        previous.visibleSince = null;
+      }
+      active = tab;
+      const next = completed.get(tab);
+      if (next) next.visibleSince = now;
+      publish();
+    },
+    remove(tab) {
+      workspaces.delete(tab);
+      clearTimer(tab);
+      state.clear(tab);
+      completed.delete(tab);
+      dismissed.delete(tab);
+    },
+    clear() {
+      for (const tab of workspaces) {clearTimer(tab); state.clear(tab);}
+      completed.clear(); dismissed.clear();
+      publish();
+    },
     command(message) {
-      if (message.type === 'easit-plus-loading-icon-v1' && state.icon(tab, message.busy, Date.now())) {
-        settle(); publish();
+      const tab = message.workspace;
+      if (message.type === 'easit-plus-loading-icon-v1' && workspaces.has(tab) && state.icon(tab, message.busy, Date.now())) {
+        settle(tab);
+        if (active === tab) publish();
+      }
+      if (message.type === 'easit-plus-loading-dismiss-v1' && tab === active) {
+        if (completed.get(tab)?.id === message.id) {completed.delete(tab); publish();}
+        else if (state.cycles.get(tab)?.id === message.id) {dismissed.set(tab,message.id); publish();}
       }
       return snapshot();
     }};
@@ -6126,7 +7513,8 @@ if (page.location.origin === site) {
   if (page === page.top) {
     initLoadCycle(ctx);
     initLoadHistory(ctx);
-    network = measure(modules.EasitPlusLoadCycle, modules.EasitPlusLoadHistory);
+    network = measure(modules.EasitPlusLoadCycle, modules.EasitPlusLoadHistory, page);
+    modules.EasitPlusLoadTiming = network;
   }
   observeRequests(page);
   const style = document.createElement('style');

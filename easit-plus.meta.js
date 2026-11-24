@@ -2,7 +2,7 @@
 // @name Easit+
 // @namespace https://github.com/theorod99/easit-plus-release
 // @description Lokala förbättringar för Easit GO
-// @version 2.1.2
+// @version 2.2.0
 // @match https://sjalvservice-it.norrkoping.se/*
 // @run-at document-start
 // @inject-into page
