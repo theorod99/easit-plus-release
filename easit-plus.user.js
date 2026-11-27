@@ -2,8 +2,9 @@
 // @name Easit+
 // @namespace https://github.com/theorod99/easit-plus-release
 // @description Lokala förbättringar för Easit GO
-// @version 2.2.0
+// @version 2.3.0
 // @match https://sjalvservice-it.norrkoping.se/*
+// @exclude /^https:\/\/sjalvservice-it\.norrkoping\.se\/selfservice(?:[/?#]|$)/
 // @run-at document-start
 // @inject-into page
 // @updateURL https://raw.githubusercontent.com/theorod99/easit-plus-release/main/easit-plus.meta.js
@@ -21,10 +22,24 @@
 (() => {
 'use strict';
 
+function isSelfServicePath(pathname) {
+  return /^\/selfservice(?:\/|$)/.test(pathname);
+}
+
+if (isSelfServicePath(location.pathname)) return;
+
 const VERSION = GM_info.script.version;
 const LOCAL_EDITOR_EDIT = Symbol.for('easitPlus.localEditorEdit');
 
 const RELEASES = [
+  {version:'2.3.0', date:'2026-11-27', changes:[
+    'Högerklicka på en flik för att duplicera eller stänga den.',
+    'Den aktiva fliken får samma kantlinje som valt statusfilter.',
+    'Sök i systemet och sökresultaten visas framför flikraden.',
+    'Nya flikar visar ”Laddar...” tills namnet kan läsas från Easit.',
+    'Easit+ körs inte längre i självserviceportalen.',
+    'Du kan inaktivera Nästa ärende i vänstermenyn under Ärendehantering.'
+  ]},
   {version:'2.2.0', date:'2026-11-24', changes:[
     'Öppna arbetsytor i egna flikar på samma sida med det nya valet Öppna i ny flik. Du kan slå på eller av funktionen i inställningarna.'
   ]},
@@ -78,21 +93,25 @@ const TICKET_BOTTOM = 'div.z-div:is(.bottomContainer,#bottomContainer,[testid="b
 const TICKET_TAB_OPEN = 'easit-plus-ticket-tab-open';
 const TICKET_POPUP_OPEN = 'easit-plus-ticket-popup-open';
 const TICKET_TAB_TEXT = 'Öppna i ny flik';
+const TICKET_TAB_LOADING_TEXT = 'Laddar...';
 const TICKET_VIEW = '[testid="ivw-view-path"]';
 const TICKET_FORM = '.easit-item-form';
 const TAB_SIDEBAR_ROW = '.menu-left .menu-content-row:is(.subgroup-item, [testid^="mc-static-"])';
+const TAB_SIDEBAR_GROUP = '.menu-left .group-item[groupid]';
+const NEXT_TICKET_BUTTON = '.menu-left [testid="mc-static-Nästa ärende"]';
 const TAB_ADD_BUTTON = '[testid="mc-toolbar-add-btn"]';
 const TAB_INFO_BUTTON = 'button.mini-button-os:is([aria-label="Visa information" i], [aria-label$=" Visa information" i])';
 const TAB_WORKSPACE_ITEM = '[testid="pivl-open-item-in-new-workspace"]';
+const TAB_DUPLICATE_BUTTON = '.toolbar-button-new-workspace';
 const TICKET_FRAME_CSS = `
 :root[data-easit-plus-ticket-frame] ${TICKET_TOP},
 :root[data-easit-plus-ticket-frame] :is(.menuComponent, .menu-left, .search-container):not(:has(:is(${TICKET_BOTTOM}, ${TICKET_FORM}, ${TICKET_VIEW}))),
-:root[data-easit-plus-ticket-frame] [data-easit-plus-tab-sidebar],
-:root[data-easit-plus-tab-workspace] ${TICKET_TOP}:not([data-easit-plus-tab-toolbar]) {
+:root[data-easit-plus-shared-sidebar] [data-easit-plus-tab-sidebar],
+:root[data-easit-plus-tab-workspace] ${TICKET_TOP}:not([data-easit-plus-tab-toolbar], :has(.menu-left)) {
   display:none !important;
 }
 :root[data-easit-plus-ticket-frame] ${TICKET_BOTTOM},
-:root[data-easit-plus-ticket-frame] [data-easit-plus-tab-content] {
+:root[data-easit-plus-shared-sidebar] [data-easit-plus-tab-content] {
   inline-size:100% !important; max-inline-size:100% !important; min-inline-size:0 !important;
   margin-inline:0 !important; padding-inline-start:0 !important; inset-inline:0 !important;
   flex:1 1 auto !important; grid-column:1 / -1 !important;
@@ -100,19 +119,20 @@ const TICKET_FRAME_CSS = `
 `;
 const TICKET_BAR_CSS = `
 .easit-plus-ticket-tabs {
-  position:fixed; z-index:2147483001; box-sizing:border-box; top:0; left:0; width:100%;
+  position:relative; z-index:2; box-sizing:border-box; width:100%; pointer-events:auto;
   display:flex; align-items:stretch; gap:6px; min-width:0;
   overflow-x:auto; padding:5px 8px; border-bottom:1px solid var(--easit-plus-ui-border);
   background:var(--easit-plus-ui-canvas); color:var(--easit-plus-ui-text); font:12px/1.4 Roboto,sans-serif;
 }
-.easit-plus-ticket-tab-space {flex:0 0 auto; align-self:stretch; width:100%; height:32px; pointer-events:none;}
+.easit-plus-ticket-tab-space {flex:0 0 auto; align-self:stretch; width:100%; min-width:0; height:32px; pointer-events:none;}
+.easit-plus-ticket-tab-space:has(> .easit-plus-ticket-tabs) {height:auto !important;}
 .easit-plus-ticket-tabs[hidden], .easit-plus-ticket-panels[hidden], .easit-plus-ticket-panel[hidden] {display:none;}
 .easit-plus-ticket-tab {
   display:flex; align-items:stretch; flex:0 0 auto; max-width:min(260px,75vw); min-width:0;
-  border-radius:6px; overflow:hidden;
+  border:1px solid transparent; border-radius:var(--easit-plus-ui-control-radius); overflow:hidden;
 }
 .easit-plus-ticket-tab:has([aria-selected="true"]) {
-  background:var(--easit-plus-ui-selected); color:var(--easit-plus-ui-accent-text);
+  background:var(--easit-plus-ui-selected); border-color:var(--easit-plus-ui-control-border); color:var(--easit-plus-ui-accent-text);
 }
 .easit-plus-ticket-tab button {border:0; background:transparent; color:inherit; font:inherit; cursor:pointer;}
 .easit-plus-ticket-tab button:hover {background:color-mix(in srgb, currentColor 9%, transparent);}
@@ -126,12 +146,19 @@ const TICKET_BAR_CSS = `
 .easit-plus-ticket-tab[data-easit-plus-tab-drop="after"] {box-shadow:2px 0 var(--easit-plus-ui-accent);}
 `;
 const STYLES_CSS = `[data-easit-plus-menu-closed] { display: none !important; }
+${NEXT_TICKET_BUTTON}[data-easit-plus-next-ticket-disabled],
+${NEXT_TICKET_BUTTON}[data-easit-plus-next-ticket-disabled] * {cursor:not-allowed !important;}
 ${TICKET_BAR_CSS}
-.easit-plus-ticket-panels {position:fixed; inset:0; z-index:2147483000; overflow:hidden; pointer-events:none;}
+.easit-plus-ticket-panels {position:fixed; inset:0; z-index:1; overflow:hidden; pointer-events:none;}
 .easit-plus-ticket-panel {position:absolute; inset:0; pointer-events:auto; background:var(--easit-plus-ui-surface);}
 .easit-plus-ticket-panel:not([data-easit-plus-tab-fullscreen]) {
-  inset:auto; top:var(--easit-plus-workspace-top); left:var(--easit-plus-workspace-left);
-  width:var(--easit-plus-workspace-width); height:var(--easit-plus-workspace-height); overflow:hidden;
+  inset:auto; top:var(--easit-plus-workspace-top);
+  right:var(--easit-plus-workspace-right);
+  height:var(--easit-plus-workspace-height); overflow:hidden;
+}
+.easit-plus-ticket-panel[data-easit-plus-tab-fullscreen] {left:var(--easit-plus-sidebar-right,0px);}
+.easit-plus-ticket-panel:not([data-easit-plus-tab-fullscreen]) {
+  left:max(var(--easit-plus-workspace-left,0px),var(--easit-plus-sidebar-right,0px));
 }
 .easit-plus-ticket-panel[data-easit-plus-tab-inactive] {opacity:0; pointer-events:none;}
 .easit-plus-ticket-frame {display:block; width:100%; height:100%; border:0;}
@@ -146,7 +173,8 @@ ${TICKET_BAR_CSS}
   display:block; width:100%; padding:7px 11px; border:0; border-radius:3px;
   color:inherit; background:transparent; text-align:left; font:12px Roboto,sans-serif; cursor:pointer;
 }
-.easit-plus-tab-menu button:is(:hover,:focus-visible) {background:var(--easit-plus-ui-hover);}
+.easit-plus-tab-menu button:enabled:is(:hover,:focus-visible) {background:var(--easit-plus-ui-hover);}
+.easit-plus-tab-menu button:disabled {color:var(--easit-plus-ui-muted); cursor:default;}
 [data-easit-plus-ticket-covered] {opacity:0 !important; pointer-events:none;}
 .easit-plus-collapsed { display: none !important; }
 .easit-plus-unread {
@@ -731,6 +759,7 @@ const POPUP_HTML = `<!doctype html>
       </section>
       <section class="card"><h2>Ärendehantering</h2>
         <label class="toggle"><span>Ärendeflikar<small>Gör det möjligt att öppna ärenden och informationsvyer i egna flikar i Easit.</small></span><input id="ticketTabsEnabled" type="checkbox"></label>
+        <label class="toggle"><span>Inaktivera Nästa ärende<small>Spärrar knappen som kan öppna ärenden från andra handläggargrupper.</small></span><input id="disableNextTicket" type="checkbox"></label>
         <label class="toggle"><span>Gruppering som standard<small>Varje tabell minns sitt eget val.</small></span><input id="groupingEnabled" type="checkbox"></label>
         <label class="toggle"><span>Dispatcherstöd för 1st line<small>Visar köantal och föreslår handläggare utifrån senast avlästa kö.</small></span><input id="firstLineWorkloadEnabled" type="checkbox"></label>
         <label class="toggle"><span>Automatisk olästhantering<small>Avmarkerar Oläst e-post vid Skicka och visar knappen Stäng och markera som läst.</small></span><input id="mailUnreadEnabled" type="checkbox"></label>
@@ -847,6 +876,7 @@ const PAGE_MODULES = [
   initFollowup,
   initAssigneePicker,
   initFirstline,
+  initDisableNextTicket,
   initTicketTabs,
   initTabNavigation,
   initContent,
@@ -897,7 +927,7 @@ function initDocuments({document, globalThis, MutationObserver}) {
       record.cleanup?.();
     }
     function add(doc) {
-      if (!doc || records.has(doc)) return;
+    if (!doc || records.has(doc) || isSelfServicePath(doc.location?.pathname)) return;
       const record = {frames:new Map(), observer:null, cleanup:null}; records.set(doc,record);
       function sync(frame, entry, refresh = false) {
         let next = null;
@@ -938,6 +968,7 @@ function initSettings({globalThis, api}) {
   const DEFAULTS = {
     copyEnabled: true,
     ticketTabsEnabled: true,
+    disableNextTicket: false,
     groupingEnabled: false,
     firstLineWorkloadEnabled: true,
     mailUnreadEnabled: true,
@@ -973,7 +1004,7 @@ function initSettings({globalThis, api}) {
   function normalize(value) {
     const source = value && typeof value === 'object' ? value : {};
     const result = {};
-    for (const key of ['ticketTabsEnabled', 'groupingEnabled', 'firstLineWorkloadEnabled', 'actionsUndoEnabled', 'themeEnabled', 'loadingEnabled', 'snowfallEnabled', 'secondaryThemeEnabled', 'snippetPickerEnabled']) {
+    for (const key of ['ticketTabsEnabled', 'disableNextTicket', 'groupingEnabled', 'firstLineWorkloadEnabled', 'actionsUndoEnabled', 'themeEnabled', 'loadingEnabled', 'snowfallEnabled', 'secondaryThemeEnabled', 'snippetPickerEnabled']) {
       result[key] = typeof source[key] === 'boolean' ? source[key] : DEFAULTS[key];
     }
     result.copyEnabled = result.unreadEnabled = true;
@@ -3180,27 +3211,26 @@ function findTabRows(document, locator) {
   return matches;
 }
 
-function expandTicketContent(document) {
-  const sidebar = document.querySelector('.menu-left');
-  const workspace = document.querySelector(TICKET_BOTTOM);
-  const content = workspace?.querySelector(`${TICKET_FORM}, ${TICKET_VIEW}, .easit-item-view-widget`) ||
-    document.querySelector(`${TICKET_FORM}, ${TICKET_VIEW}, .easit-item-view-widget`) || workspace;
-  let sidebarBranch, contentBranch;
-  if (sidebar && content) {
-    for (let child = sidebar, parent = child.parentElement; parent && parent !== document.documentElement;
-      child = parent, parent = parent.parentElement) {
-      if (!parent.contains(content) || child.contains(content)) continue;
-      sidebarBranch = child;
-      contentBranch = [...parent.children].find(node => node.contains(content));
+function hideFrameSidebar(document, workspace) {
+  const menu = document.querySelector('.menu-left');
+  const content = workspace?.bottom || document.querySelector(TICKET_BOTTOM + ', ' + TICKET_FORM + ', ' + TICKET_VIEW);
+  let branch = menu, contentBranch;
+  if (menu && content) {
+    for (let node = menu; node.parentElement && node.parentElement !== document.documentElement; node = node.parentElement) {
+      if (node.contains(content)) break;
+      if (!node.parentElement.contains(content)) continue;
+      branch = node;
+      contentBranch = [...node.parentElement.children].find(sibling => sibling.contains(content));
       break;
     }
   }
-  for (const [attribute, node] of [['data-easit-plus-tab-sidebar', sidebarBranch], ['data-easit-plus-tab-content', contentBranch]]) {
-    const old = document.querySelector('[' + attribute + ']');
-    if (old === node) continue;
-    old?.removeAttribute(attribute);
-    node?.setAttribute(attribute, '');
+  for (const [attribute, element] of [['data-easit-plus-tab-sidebar', branch], ['data-easit-plus-tab-content', contentBranch]]) {
+    const previous = document.querySelector('[' + attribute + ']');
+    if (previous === element) continue;
+    previous?.removeAttribute(attribute);
+    element?.setAttribute(attribute, '');
   }
+  document.documentElement.setAttribute('data-easit-plus-shared-sidebar', '');
 }
 
 function showTicketContent(document, workspace) {
@@ -3212,11 +3242,13 @@ function showTicketContent(document, workspace) {
     style.textContent = TICKET_FRAME_CSS + TICKET_BAR_CSS;
     (document.head || root).append(style);
   }
-  root.toggleAttribute('data-easit-plus-ticket-frame', !workspace);
+  const full = !!workspace || !!document.querySelector('.menu-left');
+  root.toggleAttribute('data-easit-plus-ticket-frame', !full);
   root.toggleAttribute('data-easit-plus-tab-workspace', !!workspace);
   if (workspace && !workspace.top.hasAttribute('data-easit-plus-tab-toolbar')) {
     workspace.top.setAttribute('data-easit-plus-tab-toolbar', '');
   }
+  return full;
 }
 
 function findTicketWorkspace(document, requireRendered = false) {
@@ -3230,8 +3262,8 @@ function findTicketWorkspace(document, requireRendered = false) {
   return null;
 }
 
-function ticketPathLabel(top) {
-  for (const part of ['itemPath', 'viewPath', 'modulePath']) {
+function ticketPathLabel(top, itemOnly = false) {
+  for (const part of itemOnly ? ['itemPath'] : ['itemPath', 'viewPath', 'modulePath']) {
     for (const node of top?.querySelectorAll('.navPath .' + part) || []) {
       if (node.closest(TICKET_TOP) !== top) continue;
       const label = node.textContent.replace(/\s+/g, ' ').trim();
@@ -3246,8 +3278,55 @@ function ticketPathLabel(top) {
       if (visible) return label;
     }
   }
+  if (itemOnly) return '';
   const label = top?.querySelector('.navPath > .z-label:not([hidden], [aria-hidden="true"])');
   return label?.textContent.replace(/\s+/g, ' ').trim() || '';
+}
+
+function initDisableNextTicket({window, document, globalThis, MutationObserver}) {
+  const settings = globalThis.EasitPlusSettings;
+  const previousDisabled = new Map();
+  let enabled = false;
+
+  function refresh() {
+    const buttons = new Set(enabled ? document.querySelectorAll(NEXT_TICKET_BUTTON) : []);
+    for (const [button, previous] of previousDisabled) {
+      if (buttons.has(button)) continue;
+      button.removeAttribute('data-easit-plus-next-ticket-disabled');
+      if (button.getAttribute('aria-disabled') === 'true') {
+        if (previous === null) button.removeAttribute('aria-disabled');
+        else button.setAttribute('aria-disabled', previous);
+      }
+      previousDisabled.delete(button);
+    }
+    for (const button of buttons) {
+      if (previousDisabled.has(button)) continue;
+      previousDisabled.set(button, button.getAttribute('aria-disabled'));
+      button.setAttribute('aria-disabled', 'true');
+      button.setAttribute('data-easit-plus-next-ticket-disabled', '');
+    }
+  }
+
+  const observer = new MutationObserver(refresh);
+  settings.subscribe(() => {
+    const next = settings.get().disableNextTicket;
+    if (enabled === next) return;
+    enabled = next;
+    if (enabled) observer.observe(document, {childList:true, subtree:true, attributes:true, attributeFilter:['testid']});
+    else observer.disconnect();
+    refresh();
+  });
+
+  function blockActivation(event) {
+    if (!enabled || !event.target.closest?.(NEXT_TICKET_BUTTON)) return;
+    if (event.type.startsWith('key') && !['Enter', ' '].includes(event.key)) return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+  }
+
+  for (const type of ['pointerdown', 'pointerup', 'mousedown', 'mouseup', 'click', 'auxclick', 'dblclick', 'keydown', 'keypress', 'keyup']) {
+    window.addEventListener(type, blockActivation, true);
+  }
 }
 
 function initTicketTabs({window, document, globalThis, MutationObserver, requestAnimationFrame}) {
@@ -3261,8 +3340,8 @@ function initTicketTabs({window, document, globalThis, MutationObserver, request
     }
     globalThis.EasitPlusTicketTabs = {
       enabled,
-      open:(url, title) => openInParent({url, title}),
-      openWorkspaceAction:(action, title) => openInParent({workspaceAction:action, title}),
+      open:url => openInParent({url}),
+      openWorkspaceAction:action => openInParent({workspaceAction:action}),
       openDestination:destination => openInParent({destination}),
       openRow:destination => openInParent({destination})
     };
@@ -3278,7 +3357,6 @@ function initTicketTabs({window, document, globalThis, MutationObserver, request
     const space = doc.createElement('div');
     space.className = 'easit-plus-ticket-tab-space';
     space.setAttribute('data-easit-plus-addon', '');
-    space.setAttribute('aria-hidden', 'true');
     return space;
   }
   const homeSpace = createSpace(document);
@@ -3291,10 +3369,82 @@ function initTicketTabs({window, document, globalThis, MutationObserver, request
   const tabs = new Set();
   const barEntries = new WeakMap();
   const covered = new Map();
-  let active = null, layout = null;
+  const menu = document.createElement('div');
+  menu.className = 'easit-plus-tab-menu';
+  menu.setAttribute('data-easit-plus-addon', '');
+  menu.setAttribute('popover', 'auto');
+  menu.setAttribute('role', 'menu');
+  menu.setAttribute('aria-label', 'Flikåtgärder');
+  const duplicate = document.createElement('button');
+  const close = document.createElement('button');
+  duplicate.textContent = 'Duplicera flik';
+  close.textContent = 'Stäng flik';
+  for (const button of [duplicate, close]) {
+    button.type = 'button';
+    button.setAttribute('role', 'menuitem');
+    menu.append(button);
+  }
+  let active = null, layout = null, sidebar = null;
+  let menuEntry = null;
   let sequence = 0, layoutPending = false, positionPending = false;
   let homeBrowserTitle = '';
   let spacerHeight = 32;
+  const groupChanges = new WeakMap();
+  let restoringGroups = false;
+
+  function groupExpanded(group) {
+    const value = group.getAttribute('aria-expanded') ?? group.getAttribute('openstate');
+    if (value === 'true' || value === 'false') return value === 'true';
+    const id = group.getAttribute('groupid');
+    return [...document.querySelectorAll(TAB_SIDEBAR_ROW)].some(row =>
+      row.getAttribute('groupid') === id && row.getClientRects().length && !row.closest('[aria-hidden="true"]'));
+  }
+
+  function showSidebarState(entry) {
+    if (!sidebar) return;
+    const selected = entry.view && findSidebarView(document, entry.view);
+    for (const row of document.querySelectorAll(TAB_SIDEBAR_ROW)) {
+      row.classList.toggle('selected-menu-item', row === selected);
+    }
+    restoringGroups = true;
+    try {
+      for (const group of document.querySelectorAll(TAB_SIDEBAR_GROUP)) {
+        const id = group.getAttribute('groupid');
+        const expanded = groupExpanded(group);
+        const change = groupChanges.get(group);
+        if (change && expanded !== change.from) groupChanges.delete(group);
+        if (!entry.groups.has(id)) entry.groups.set(id, expanded);
+        if (entry.groups.get(id) === expanded || groupChanges.has(group)) continue;
+        groupChanges.set(group, {from:expanded});
+        group.click();
+      }
+    } finally {
+      restoringGroups = false;
+    }
+  }
+
+  function hideMenu() {
+    if (menu.matches(':popover-open')) menu.hidePopover();
+  }
+
+  function mountBar(container) {
+    if (bar.parentElement === container) return;
+    const focused = bar.ownerDocument.activeElement;
+    hideMenu();
+    menu.remove();
+    container.append(bar);
+    if (bar.contains(focused)) focused.focus({preventScroll:true});
+    keepSelectedTabVisible();
+  }
+
+  function keepSelectedTabVisible() {
+    if (!bar.isConnected) return;
+    const item = (active || home).item;
+    const left = item.offsetLeft;
+    const right = left + item.offsetWidth;
+    if (left < bar.scrollLeft) bar.scrollLeft = left;
+    else if (right > bar.scrollLeft + bar.clientWidth) bar.scrollLeft = right - bar.clientWidth;
+  }
 
   function cover(elements) {
     for (const [element, wasInert] of covered) {
@@ -3325,23 +3475,21 @@ function initTicketTabs({window, document, globalThis, MutationObserver, request
 
   function position() {
     if (!tabs.size) return;
-    const workspace = activeWorkspace();
-    const space = workspace ? active.space : homeSpace;
-    if (space?.isConnected && space.nextElementSibling === (workspace?.bottom || layout?.bottom)) {
-      const {left, top, width} = space.getBoundingClientRect();
-      const frame = workspace ? active.frame.getBoundingClientRect() : {left:0, top:0};
-      setPixels(bar, {left:left + frame.left, top:top + frame.top, width});
-      const height = bar.offsetHeight || spacerHeight;
-      if (height !== spacerHeight) {
-        spacerHeight = height;
-        for (const spacer of [homeSpace, ...[...tabs].map(tab => tab.space)]) {
-          if (spacer) setPixels(spacer, {height});
-        }
+    const sidebarRight = sidebar?.getClientRects().length ? sidebar.getBoundingClientRect().right : 0;
+    const sidebarOffset = Math.max(0, Math.min(window.innerWidth, sidebarRight)) + 'px';
+    if (panels.style.getPropertyValue('--easit-plus-sidebar-right') !== sidebarOffset) {
+      panels.style.setProperty('--easit-plus-sidebar-right', sidebarOffset);
+    }
+    const height = bar.offsetHeight || spacerHeight;
+    if (height !== spacerHeight) {
+      spacerHeight = height;
+      for (const spacer of [homeSpace, ...[...tabs].map(tab => tab.space)]) {
+        if (spacer) setPixels(spacer, {height});
       }
     }
     if (layout?.bottom.isConnected) {
-      const {left, top, width, height} = layout.bottom.getBoundingClientRect();
-      for (const [name, value] of Object.entries({left, top, width, height})) {
+      const {left, top, right, height} = layout.bottom.getBoundingClientRect();
+      for (const [name, value] of Object.entries({left, top, right:window.innerWidth - right, height})) {
         const property = '--easit-plus-workspace-' + name;
         if (panels.style.getPropertyValue(property) !== value + 'px') panels.style.setProperty(property, value + 'px');
       }
@@ -3366,41 +3514,52 @@ function initTicketTabs({window, document, globalThis, MutationObserver, request
     });
   }
 
-  const resizeObserver = new window.ResizeObserver(queuePosition);
+  const resizeObserver = new window.ResizeObserver(entries => {
+    if (entries.some(entry => entry.target === bar)) keepSelectedTabVisible();
+    queuePosition();
+  });
   function syncLayout() {
     const next = findTicketWorkspace(document, true);
-    if (next?.bottom !== layout?.bottom || next?.top !== layout?.top) {
+    const nextSidebar = document.querySelector('.menu-left');
+    if (next?.bottom !== layout?.bottom || next?.top !== layout?.top || nextSidebar !== sidebar) {
       resizeObserver.disconnect();
       layout = next;
+      sidebar = nextSidebar;
       resizeObserver.observe(bar);
       resizeObserver.observe(homeSpace);
+      if (sidebar) resizeObserver.observe(sidebar);
       if (layout) {
         resizeObserver.observe(layout.top);
         resizeObserver.observe(layout.bottom);
       }
     }
-    const workspace = activeWorkspace();
-    const bottom = workspace?.bottom || layout?.bottom;
+    const loading = active?.frame.hasAttribute('data-easit-plus-tab-pending');
+    const full = !loading && active?.panel.hasAttribute('data-easit-plus-tab-fullscreen');
     if (layout && homeSpace.nextElementSibling !== layout.bottom) layout.bottom.before(homeSpace);
+    // Use the workspace layout for the strip's width and position.
+    const frameSpace = full && active.space?.isConnected && active.space.ownerDocument === active.frame.contentDocument;
+    const space = frameSpace ? active.space : homeSpace;
+    mountBar(space.isConnected ? space : document.body);
     if (layout?.bottom.id) home.button.setAttribute('aria-controls', layout.bottom.id);
     else home.button.removeAttribute('aria-controls');
-    const viewingTicket = !!(active && bottom);
-    if (workspace) {
-      cover([layout?.top, layout?.bottom, document.querySelector('.menu-left')]);
-    } else {
-      cover(viewingTicket ? [layout?.bottom] : []);
-    }
+    const behindPanel = active ? [layout?.bottom, full ? layout?.top : null] : [];
+    cover(behindPanel.filter(element => element && !element.contains(homeSpace) && !element.contains(sidebar)));
     // Keep each iframe laid out at the same size while another tab is selected.
     if (panels.hidden === Boolean(tabs.size)) panels.hidden = !tabs.size;
     position();
     updateHomeTitle();
+    showSidebarState(active || home);
   }
 
   const layoutObserver = new MutationObserver(records => {
-    if (!bar.isConnected && document.body) document.body.append(bar);
     if (!panels.isConnected && document.body) document.body.prepend(panels);
-    if (!layout?.top.isConnected || !layout?.bottom.isConnected || homeSpace.nextElementSibling !== layout.bottom) queueLayout();
+    if (!bar.isConnected || !layout?.top.isConnected || !layout?.bottom.isConnected || homeSpace.nextElementSibling !== layout.bottom ||
+        document.querySelector('.menu-left') !== sidebar) queueLayout();
     else if (records.some(record => layout.top.contains(record.target))) updateHomeTitle();
+    if (sidebar && records.some(record => sidebar.contains(record.target))) {
+      if (!active) home.view = sidebarView(document);
+      showSidebarState(active || home);
+    }
   });
 
   const titleObserver = new MutationObserver(updateBrowserTitle);
@@ -3421,7 +3580,7 @@ function initTicketTabs({window, document, globalThis, MutationObserver, request
     button.title = button.textContent = label;
     item.append(button);
     bar.append(item);
-    const entry = {item, button};
+    const entry = {item, button, groups:new Map(), view:null};
     barEntries.set(item, entry);
     return entry;
   }
@@ -3430,6 +3589,7 @@ function initTicketTabs({window, document, globalThis, MutationObserver, request
 
   function select(tab, focus = true) {
     clearDrag();
+    hideMenu();
     if (active !== tab) globalThis.EasitPlusHeaderPopup?.close?.(false);
     active = tab;
     globalThis.EasitPlusLoadTiming?.select(tab?.id || 'home');
@@ -3444,11 +3604,66 @@ function initTicketTabs({window, document, globalThis, MutationObserver, request
       }
     }
     syncLayout();
+    keepSelectedTabVisible();
     if (focus) (tab || home).button.focus();
   }
 
   const home = createButton('Arbetsyta', false);
   home.button.addEventListener('click', () => select(null));
+  function duplicateAction(entry) {
+    if (entry !== home && !tabs.has(entry)) return null;
+    const source = entry === home ? document : entry.frame.contentDocument;
+    if (!source || isSelfServicePath(source.location?.pathname) || workspaceRequests.has(source)) return null;
+    const toolbar = entry === home ? layout?.top : entry.workspace?.top;
+    const selector = `${TAB_DUPLICATE_BUTTON}:not([disabled], [aria-disabled="true"])`;
+    return (toolbar || source).querySelector(selector);
+  }
+  bar.addEventListener('contextmenu', event => {
+    const entry = barEntries.get(event.target.closest?.('.easit-plus-ticket-tab'));
+    if (!entry || typeof menu.showPopover !== 'function') return;
+    event.preventDefault();
+    event.stopPropagation();
+    hideMenu();
+    menuEntry = entry;
+    duplicate.textContent = 'Duplicera flik';
+    duplicate.disabled = !enabled() || !duplicateAction(entry);
+    close.disabled = entry === home;
+    const owner = bar.ownerDocument;
+    const view = owner.defaultView;
+    const anchor = entry.button.getBoundingClientRect();
+    owner.body.append(menu);
+    menu.showPopover();
+    const usePointer = event.clientX || event.clientY;
+    setPixels(menu, {
+      left:Math.max(0, Math.min(usePointer ? event.clientX : anchor.left, view.innerWidth - menu.offsetWidth)),
+      top:Math.max(0, Math.min(usePointer ? event.clientY : anchor.bottom, view.innerHeight - menu.offsetHeight))
+    });
+    menu.querySelector('button:enabled')?.focus({preventScroll:true});
+  });
+  duplicate.addEventListener('click', () => {
+    const action = duplicateAction(menuEntry);
+    if (action && openWorkspaceAction(action, action.ownerDocument)) return;
+    duplicate.textContent = 'Kunde inte duplicera fliken';
+  });
+  close.addEventListener('click', () => {
+    const entry = menuEntry;
+    hideMenu();
+    (active || home).button.focus({preventScroll:true});
+    requestClose(entry);
+  });
+  menu.addEventListener('keydown', event => {
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      event.stopPropagation();
+      hideMenu();
+      (active || home).button.focus({preventScroll:true});
+    } else if (['ArrowDown', 'ArrowUp'].includes(event.key)) {
+      event.preventDefault();
+      const options = [...menu.querySelectorAll('button:enabled')];
+      const index = options.indexOf(event.target);
+      options[(index + (event.key === 'ArrowDown' ? 1 : options.length - 1)) % options.length]?.focus();
+    }
+  });
   bar.addEventListener('keydown', event => {
     if (event.target.getAttribute('role') !== 'tab') return;
     const order = tabOrder();
@@ -3532,7 +3747,7 @@ function initTicketTabs({window, document, globalThis, MutationObserver, request
     if (!tabs.delete(tab)) return;
     const order = tabOrder().filter(entry => entry !== home);
     const index = order.indexOf(tab);
-    const hadFocus = tab.item.contains(document.activeElement);
+    const hadFocus = tab.item.contains(bar.ownerDocument.activeElement);
     const next = active === tab ? order[index - 1] || order[index + 1] || null : active;
     clearDrag();
     tab.space?.remove();
@@ -3552,9 +3767,12 @@ function initTicketTabs({window, document, globalThis, MutationObserver, request
       resizeObserver.disconnect();
       titleObserver.disconnect();
       updateHomeTitle();
+      showSidebarState(home);
       layout = null;
+      sidebar = null;
       panels.remove();
       bar.remove();
+      menu.remove();
       homeSpace.remove();
     }
   }
@@ -3577,40 +3795,69 @@ function initTicketTabs({window, document, globalThis, MutationObserver, request
       tab.close.setAttribute('aria-label', tab.close.title);
       tab.frame.title = label;
     }
+    if (tab === (active || home)) keepSelectedTabVisible();
+  }
+
+  function forwardSidebarOutsideClick(tab, event) {
+    if (active !== tab || !sidebar?.isConnected || event.button !== 0 || !event.isTrusted) return;
+    const hasOpenPopup = sidebar.querySelector('[aria-controls][openstate="true"], [aria-haspopup][aria-expanded="true"]') ||
+      document.querySelector('.z-menupopup-open, .z-popup-open');
+    if (!hasOpenPopup) return;
+    // Easit's outside-click handlers live in the document that owns the shared menu.
+    const frame = tab.frame.getBoundingClientRect();
+    sidebar.dispatchEvent(new window.MouseEvent(event.type, {
+      bubbles:true, cancelable:true, view:window, button:event.button, buttons:event.buttons,
+      clientX:frame.left + event.clientX, clientY:frame.top + event.clientY
+    }));
   }
 
   function watchTicket(tab, ticketDocument) {
     tab.space?.remove();
     const space = tab.space = createSpace(ticketDocument);
     setPixels(space, {height:spacerHeight});
-    let repair = 0;
-    function mountSpace() {
-      const bottom = tab.workspace?.bottom;
-      if (bottom?.isConnected && space.nextElementSibling !== bottom) bottom.before(space);
-      if (active === tab) queuePosition();
+    const pathId = ticketDocument.location?.pathname.match(/\/sequenceId\/(\d+)\/?$/)?.[1];
+    let lastView;
+    let waitForItemName = !!pathId && tab.button.textContent === TICKET_TAB_LOADING_TEXT;
+    function rescueBar() {
+      tab.frame.setAttribute('data-easit-plus-tab-pending', '');
+      tab.panel.removeAttribute('data-easit-plus-tab-fullscreen');
+      tab.status.textContent = 'Öppnar …';
+      tab.panel.append(tab.status);
+      if (active === tab) syncLayout();
     }
     function update() {
       const workspace = findTicketWorkspace(ticketDocument, true) || findTicketWorkspace(ticketDocument);
       const previous = tab.workspace;
       if (previous?.top !== workspace?.top) previous?.top.removeAttribute('data-easit-plus-tab-toolbar');
       tab.workspace = workspace;
-      showTicketContent(ticketDocument, workspace);
-      if (!workspace) expandTicketContent(ticketDocument);
-      if (workspace) tab.panel.setAttribute('data-easit-plus-tab-fullscreen', '');
-      if (workspace && space.nextElementSibling !== workspace.bottom && !repair) {
-        repair = requestAnimationFrame(() => {repair = 0; mountSpace();});
+      const full = showTicketContent(ticketDocument, workspace);
+      hideFrameSidebar(ticketDocument, workspace);
+      const view = sidebarView(ticketDocument);
+      if (view && JSON.stringify(view) !== lastView) {
+        lastView = JSON.stringify(view);
+        tab.view = view;
+        if (active === tab) showSidebarState(tab);
       }
-      if (active === tab) {
-        if (previous?.top !== workspace?.top || previous?.bottom !== workspace?.bottom) syncLayout();
+      const resized = tab.panel.hasAttribute('data-easit-plus-tab-fullscreen') !== full;
+      tab.panel.toggleAttribute('data-easit-plus-tab-fullscreen', full);
+      const bottom = workspace?.bottom || (full && ticketDocument.querySelector(TICKET_BOTTOM));
+      const needsMount = full && (!space.isConnected || bottom && space.nextElementSibling !== bottom);
+      if (needsMount) {
+        if (bottom) bottom.before(space);
+        else ticketDocument.body.prepend(space);
       }
-      let label = ticketPathLabel(workspace?.top);
+      if (active === tab && (needsMount || resized || previous?.top !== workspace?.top || previous?.bottom !== workspace?.bottom)) {
+        syncLayout();
+      }
+      let label = ticketPathLabel(workspace?.top, waitForItemName);
       if (!workspace) {
         for (const top of ticketDocument.querySelectorAll(TICKET_TOP)) {
-          label = ticketPathLabel(top);
+          label = ticketPathLabel(top, waitForItemName);
           if (label) break;
         }
       }
       if (label) {
+        waitForItemName = false;
         setTabLabel(tab, label);
         if (active === tab) updateBrowserTitle();
         return;
@@ -3622,45 +3869,55 @@ function initTicketTabs({window, document, globalThis, MutationObserver, request
       const value = field?.matches('input,textarea') ? field.value :
         field?.querySelector('input:not([type="hidden"]),textarea')?.value ??
         field?.querySelector('.easit-showlabel, [contenteditable="true"]')?.textContent;
-      const pathId = ticketDocument.location?.pathname.match(/\/sequenceId\/(\d+)\/?$/)?.[1];
-      const id = formTicketId(form) || pathId || tab.ticketId;
-      const title = value?.trim() || tab.title;
-      setTabLabel(tab, id ? (title ? `#${id} · ${title}` : '#' + id) : title);
-      if (active === tab) updateBrowserTitle();
+      const id = formTicketId(form) || pathId;
+      const title = value?.trim();
+      if (title) {
+        waitForItemName = false;
+        setTabLabel(tab, id ? `#${id} · ${title}` : title);
+        if (active === tab) updateBrowserTitle();
+      }
     }
     const observer = new MutationObserver(records => {
       if (records.some(record => record.attributeName !== 'style' || record.target.closest('.navPath'))) update();
     });
     observer.observe(ticketDocument, {subtree:true, childList:true, characterData:true,
-      attributes:true, attributeFilter:['value','title','hidden','aria-hidden','style']});
+      attributes:true, attributeFilter:['value','title','hidden','aria-hidden','style','class']});
     ticketDocument.addEventListener('input', update, true);
     ticketDocument.addEventListener('change', update, true);
-    ticketDocument.defaultView?.addEventListener('scroll', queuePosition, {capture:true, passive:true});
+    const outsideClickEvents = ['pointerdown', 'mousedown', 'click'];
+    const outsideClick = event => forwardSidebarOutsideClick(tab, event);
+    for (const type of outsideClickEvents) ticketDocument.addEventListener(type, outsideClick, true);
+    const view = ticketDocument.defaultView;
+    view?.addEventListener('scroll', queuePosition, {capture:true, passive:true});
+    // Move the controls out before the old iframe document loses its event listeners.
+    view?.addEventListener('pagehide', rescueBar, {once:true});
     update();
-    mountSpace();
     return () => {
-      if (repair) window.cancelAnimationFrame(repair);
       observer.disconnect();
       ticketDocument.removeEventListener('input', update, true);
       ticketDocument.removeEventListener('change', update, true);
-      ticketDocument.defaultView?.removeEventListener('scroll', queuePosition, true);
+      for (const type of outsideClickEvents) ticketDocument.removeEventListener(type, outsideClick, true);
+      view?.removeEventListener('scroll', queuePosition, true);
+      view?.removeEventListener('pagehide', rescueBar);
     };
   }
 
-  function openPage(url, title, ticketId, {destination, workspaceAction} = {}) {
+  function openPage(url, {destination, workspaceAction} = {}) {
     if (!enabled()) return false;
     if (!activeWorkspace() && !findTicketWorkspace(document, true)) return false;
     if (!tabs.size) {
       homeBrowserTitle = document.title;
-      document.body.append(panels, bar);
+      home.view = sidebarView(document);
+      home.groups = new Map([...document.querySelectorAll(TAB_SIDEBAR_GROUP)].map(group =>
+        [group.getAttribute('groupid'), groupExpanded(group)]));
+      document.body.append(panels);
       layoutObserver.observe(document, {subtree:true, childList:true, characterData:true,
-        attributes:true, attributeFilter:['hidden','aria-hidden','style']});
+        attributes:true, attributeFilter:['hidden','aria-hidden','style','class','aria-expanded','openstate']});
       if (document.head) titleObserver.observe(document.head, {subtree:true, childList:true, characterData:true});
     }
-    const label = ticketId ? (title ? `#${ticketId} · ${title}` : '#' + ticketId) : title;
+    const label = TICKET_TAB_LOADING_TEXT;
     const tab = createButton(label);
-    tab.title = title;
-    tab.ticketId = ticketId;
+    tab.groups = new Map((active || home).groups);
     tab.closeAttempts = 0;
     const number = ++sequence;
     tab.id = 'ticket-' + number;
@@ -3688,6 +3945,47 @@ function initTicketTabs({window, document, globalThis, MutationObserver, request
     tab.frame.title = label;
     if (url) tab.frame.src = url;
     let pending = destination;
+    let navigation, addRequest;
+    function loadWorkspace(destination) {
+      if (tab.frame.hasAttribute('data-easit-plus-tab-pending')) tab.dispose?.();
+      const address = new URL('/', window.location.origin).href;
+      navigation = {address, destination};
+      tab.frame.src = address;
+    }
+    tab.navigate = view => {
+      const frameDocument = tab.frame.contentDocument;
+      const target = frameDocument && !isSelfServicePath(frameDocument.location?.pathname) && findSidebarView(frameDocument, view);
+      if (target) {
+        target.click();
+        return;
+      }
+      // Load the native sidebar for standalone workspaces and use its view action.
+      loadWorkspace({kind:'view', view});
+    };
+    tab.quickAdd = destination => {
+      if (addRequest) return;
+      const frameDocument = tab.frame.contentDocument;
+      if (!frameDocument?.querySelector(TAB_ADD_BUTTON) || isSelfServicePath(frameDocument.location?.pathname)) {
+        loadWorkspace(destination);
+        return;
+      }
+      const controller = addRequest = new window.AbortController();
+      const frameWindow = frameDocument.defaultView;
+      const cancel = () => controller.abort();
+      frameWindow.addEventListener('pagehide', cancel, {once:true});
+      runTabDestination(frameDocument, destination, controller.signal).catch(() => {
+        if (controller.signal.aborted || !tabs.has(tab)) return;
+        const notice = document.createElement('div');
+        notice.className = 'easit-plus-copy-toast';
+        notice.setAttribute('role', 'alert');
+        notice.textContent = 'Kunde inte öppna ' + destination.label + ' i fliken.';
+        globalThis.EasitPlusFeedback.mountNotice(notice);
+        window.setTimeout(() => notice.remove(), 5000);
+      }).finally(() => {
+        frameWindow.removeEventListener('pagehide', cancel);
+        if (addRequest === controller) addRequest = null;
+      });
+    };
     tab.status = document.createElement('p');
     tab.status.className = 'easit-plus-ticket-state';
     tab.status.setAttribute('role', 'status');
@@ -3696,21 +3994,28 @@ function initTicketTabs({window, document, globalThis, MutationObserver, request
     const finishOpen = globalThis.EasitPlusLoadTiming?.startOpen(tab.id);
     function failOpen() {
       tab.status.textContent = 'Kunde inte öppna fliken';
+      setTabLabel(tab, 'Kunde inte öppna');
+      if (active === tab) updateBrowserTitle();
       finishOpen?.();
     }
     function reveal(ticketDocument) {
-      const workspace = findTicketWorkspace(ticketDocument);
-      tab.panel.toggleAttribute('data-easit-plus-tab-fullscreen', !!workspace);
-      tab.dispose = watchTicket(tab, ticketDocument);
+      const excluded = isSelfServicePath(ticketDocument.location.pathname);
       tab.status.remove();
       tab.frame.removeAttribute('data-easit-plus-tab-pending');
+      if (!excluded) tab.dispose = watchTicket(tab, ticketDocument);
+      else {
+        tab.panel.removeAttribute('data-easit-plus-tab-fullscreen');
+        setTabLabel(tab, 'Självservice');
+        if (active === tab) updateBrowserTitle();
+      }
+      if (active === tab) syncLayout();
       finishOpen?.();
     }
     tab.frame.addEventListener(TICKET_TAB_OPEN, event => {
       const request = event.detail;
       const destination = request?.destination;
-      const opened = request?.workspaceAction ? openWorkspaceAction(request.workspaceAction, request.title, tab.frame.contentDocument) :
-        destination ? openDestination(destination) : open(request?.url, request?.title);
+      const opened = request?.workspaceAction ? openWorkspaceAction(request.workspaceAction, tab.frame.contentDocument) :
+        destination ? openDestination(destination) : open(request?.url);
       if (opened) event.preventDefault();
     });
     tab.frame.addEventListener(TICKET_POPUP_OPEN, event => {
@@ -3719,6 +4024,8 @@ function initTicketTabs({window, document, globalThis, MutationObserver, request
     });
     tab.frame.addEventListener('load', () => {
       if (!tabs.has(tab)) return;
+      addRequest?.abort();
+      addRequest = null;
       const ticketDocument = tab.frame.contentDocument;
       if (ticketDocument?.documentElement?.hasAttribute('data-easit-plus-ticket-closed')) {
         finishClose(tab);
@@ -3735,6 +4042,15 @@ function initTicketTabs({window, document, globalThis, MutationObserver, request
         failOpen();
         return;
       }
+      if (isSelfServicePath(ticketDocument.location.pathname)) {
+        pending = null;
+        reveal(ticketDocument);
+        return;
+      }
+      if (navigation?.address === ticketDocument.location.href) {
+        pending = navigation.destination;
+      }
+      navigation = null;
       if (!pending) {
         reveal(ticketDocument);
         return;
@@ -3762,40 +4078,63 @@ function initTicketTabs({window, document, globalThis, MutationObserver, request
     return true;
   }
 
-  function open(url, title) {
+  function open(url) {
     if (typeof url !== 'string') return false;
     let address;
     try { address = new URL(url); } catch { return false; }
     const ticketId = address.pathname.match(/^\/openItem\/moduleId\/\d+\/sequenceId\/(\d+)\/?$/)?.[1];
     if (address.origin !== window.location.origin || !ticketId) return false;
-    return openPage(address.href, typeof title === 'string' ? title : '', ticketId);
+    return openPage(address.href);
   }
 
   function openDestination(destination) {
     if (!['row','new'].includes(destination.kind)) return false;
     const url = new URL(destination.url || '/', window.location.origin);
     if (url.origin !== window.location.origin) return false;
-    return openPage(url.href, destination.label, '', {destination});
+    return openPage(url.href, {destination});
   }
 
-  function openWorkspaceAction(action, title, source = document) {
+  function openWorkspaceAction(action, source = document) {
     if (!source || action?.ownerDocument !== source || !action.isConnected ||
-      !action.matches?.('a.z-menuitem-content:not([disabled], [aria-disabled="true"])') || workspaceRequests.has(source)) return false;
-    return openPage(null, title, '', {workspaceAction:action});
+      !action.matches?.(`:is(a.z-menuitem-content, ${TAB_DUPLICATE_BUTTON}):not([disabled], [aria-disabled="true"])`) ||
+      workspaceRequests.has(source)) return false;
+    return openPage(null, {workspaceAction:action});
   }
 
   globalThis.EasitPlusTicketTabs = {enabled, open, openWorkspaceAction, openDestination, openRow:openDestination};
   window.addEventListener('click', event => {
-    if (!active || active.workspace || event.button !== 0 || event.defaultPrevented ||
-      event.target.closest?.('.tools-container')) return;
-    const view = sidebarDestination(event.target.closest?.(TAB_SIDEBAR_ROW));
-    const page = active.frame.contentDocument;
-    if (!view || page?.location?.origin !== window.location.origin) return;
-    const target = findSidebarView(page, view);
-    if (!target) return;
+    if (!active || event.button !== 0 || event.defaultPrevented) return;
+    const item = event.target.closest?.('li.z-menuitem');
+    const destination = quickAddDestination(item, document);
+    if (!destination) return;
     event.preventDefault();
     event.stopImmediatePropagation();
-    target.click();
+    const tab = active;
+    for (const id of destination.popups) {
+      const popup = document.getElementById(id);
+      if (popup) closeNativePopup(popup);
+    }
+    tab.quickAdd(destination);
+  }, true);
+  window.addEventListener('click', event => {
+    if (!tabs.size || restoringGroups || event.button !== 0 || event.defaultPrevented ||
+        event.target.closest?.('.tools-container')) return;
+    const entry = active || home;
+    const row = event.target.closest?.(TAB_SIDEBAR_ROW);
+    const group = !row && event.target.closest?.(TAB_SIDEBAR_GROUP);
+    if (group) {
+      const expanded = groupExpanded(group);
+      entry.groups.set(group.getAttribute('groupid'), !expanded);
+      groupChanges.set(group, {from:expanded});
+      return;
+    }
+    const view = sidebarDestination(row);
+    if (!active || !view) return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    entry.view = view;
+    showSidebarState(entry);
+    entry.navigate(view);
   }, true);
   window.addEventListener('resize', queuePosition);
   window.addEventListener('scroll', queuePosition, {capture:true, passive:true});
@@ -3817,27 +4156,42 @@ function quickAddDestination(item, document) {
   const label = tabMenuItemLabel(item);
   if (!rootId || !label) return null;
   const path = [];
+  const popups = [];
   const seen = new Set();
   for (let current = item; current && !seen.has(current); ) {
     seen.add(current);
     path.unshift({id:current.getAttribute('testid'), label:tabMenuItemLabel(current)});
     const popup = current.parentElement?.closest('.z-menupopup');
-    if (popup?.id === rootId || current.parentElement?.id === rootId + '-cave') return {kind:'new', label, path};
+    if (popup?.id) popups.push(popup.id);
+    if (popup?.id === rootId || current.parentElement?.id === rootId + '-cave') return {kind:'new', label, path, popups};
     if (!popup?.id) return null;
     current = [...document.querySelectorAll('li.z-menu')].find(owner => tabSubmenuId(owner) === popup.id);
   }
   return null;
 }
 
+function closeNativePopup(popup) {
+  const widget = popup.ownerDocument.defaultView?.zk?.Widget?.$?.(popup.id);
+  if (typeof widget?.close !== 'function') return false;
+  widget.close({sendOnOpen:true});
+  return true;
+}
+
 function sidebarDestination(row) {
   const label = row?.querySelector('.text-container .item-text')?.textContent.trim();
   const index = row?.getAttribute('index');
-  return label && index ? {label, index, group:row.getAttribute('groupid')} : null;
+  const testId = row?.getAttribute('testid');
+  return label && (index || testId) ? {label, index, testId, group:row.getAttribute('groupid')} : null;
 }
 
 function findSidebarView(document, view) {
   return [...document.querySelectorAll(TAB_SIDEBAR_ROW)].find(item =>
-    item.getAttribute('index') === view.index && item.getAttribute('groupid') === view.group);
+    view.testId ? item.getAttribute('testid') === view.testId :
+      item.getAttribute('index') === view.index && item.getAttribute('groupid') === view.group);
+}
+
+function sidebarView(document) {
+  return sidebarDestination(document.querySelector(TAB_SIDEBAR_ROW + '.selected-menu-item'));
 }
 
 function informationSection(label) {
@@ -3969,6 +4323,7 @@ async function runTabDestination(document, destination, signal) {
       row.click();
     }
   }
+  if (destination.kind === 'view') return openView(destination.view);
   if (destination.kind === 'row') {
     if (destination.view) await openView(destination.view);
     const row = await waitFor(() => {
@@ -3994,11 +4349,11 @@ async function runTabDestination(document, destination, signal) {
     if (index === destination.path.length - 1) {
       const action = item.querySelector(':scope > a.z-menuitem-content');
       if (!action || action.matches('[disabled], [aria-disabled="true"]')) throw Error('Menyvalet saknar en åtgärd');
-      action.click();
+      if (!signal.aborted) action.click();
       return;
     }
     popupId = tabSubmenuId(item);
-    const popup = page.zk.Widget.$(item.id)?.menupopup;
+    const popup = page.zk.Widget.$?.(item.id)?.menupopup;
     if (popup?.open && !popup.isOpen?.()) popup.open();
     else if (!popup) item.dispatchEvent(new page.MouseEvent('mouseenter'));
   }
@@ -4090,9 +4445,8 @@ function initTabNavigation({window, document, globalThis, Element, MutationObser
         !informationEntries(popup).includes(item)) return;
       const section = informationSection(tabMenuItemLabel(item));
       if (!section) return;
-      const label = owner.getAttribute('aria-label').replace(/\s*Visa information$/i, '').trim() || 'Information';
       const entry = item.querySelector(':scope > a.z-menuitem-content');
-      open = () => tabs.openWorkspaceAction(entry, `${label} · ${section}`);
+      open = () => tabs.openWorkspaceAction(entry);
     }
     if (!open || !show(event.clientX, event.clientY, open)) return;
     event.preventDefault();
@@ -4205,13 +4559,10 @@ function initContent({window, document, globalThis, Element, MutationObserver, g
     if (!tabsEnabled() || !canOpenCell(selected)) return false;
     if (selected.link) {
       const current = ticketFromCell(selected.cell, selected.inventory);
-      return current?.url === selected.link && tabs.open(current.url, selected.ticket?.title || current.title);
+      return current?.url === selected.link && tabs.open(current.url);
     }
     const action = selected.inventory && list && nativeWorkspaceAction(list);
-    if (action) {
-      const title = selected.replay?.label || tabRowText(selected.row).find(text => /\p{L}/u.test(text)) || 'Inventarie';
-      return tabs.openWorkspaceAction(action, title);
-    }
+    if (action) return tabs.openWorkspaceAction(action);
     const current = replayTarget(selected.row, selected.inventory);
     return !!current && current.url === selected.replay?.url &&
       current.locator.cells === selected.replay.locator.cells && tabs.openRow(current);
@@ -4248,13 +4599,6 @@ function initContent({window, document, globalThis, Element, MutationObserver, g
     const hasWorkspaceAction = [...list.children].some(item =>
       item.querySelector('.z-menuitem-text')?.textContent.trim() === 'Öppna i ny arbetsyta');
     return hasWorkspaceAction && !context?.openPopups.has(popup) ? list : null;
-  }
-
-  function closeNativePopup(popup) {
-    const widget = window.zk?.Widget?.$?.(popup.id);
-    if (typeof widget?.close !== 'function') return false;
-    widget.close({sendOnOpen:true});
-    return true;
   }
 
   function closeSubmenus(list) {
@@ -6242,7 +6586,7 @@ function initPopup({window, document, globalThis, api, postToHeader, reloadPopup
     const brand=document.querySelector('.brand-icon');
     brand.style.background=globalThis.EasitPlusIcon.color(value);
     brand.style.color=globalThis.EasitPlusIcon.foreground(globalThis.EasitPlusIcon.color(value));
-    for (const key of ['ticketTabsEnabled', 'groupingEnabled', 'firstLineWorkloadEnabled', 'mailUnreadEnabled', 'actionsUndoEnabled', 'loadingEnabled', 'snippetPickerEnabled']) document.getElementById(key).checked = value[key];
+    for (const key of ['ticketTabsEnabled', 'disableNextTicket', 'groupingEnabled', 'firstLineWorkloadEnabled', 'mailUnreadEnabled', 'actionsUndoEnabled', 'loadingEnabled', 'snippetPickerEnabled']) document.getElementById(key).checked = value[key];
     document.getElementById('snippetPickerTrigger').value=value.snippetPickerTrigger;
     document.getElementById('snippetPickerTrigger').disabled=!value.snippetPickerEnabled;
     const colors=themeDraft||value;
@@ -6278,7 +6622,7 @@ function initPopup({window, document, globalThis, api, postToHeader, reloadPopup
   }
   function readFields() {
     const value={...settings.saved()};
-    for(const key of ['ticketTabsEnabled','groupingEnabled','firstLineWorkloadEnabled','mailUnreadEnabled','actionsUndoEnabled','loadingEnabled','snippetPickerEnabled'])value[key]=document.getElementById(key).checked;
+    for(const key of ['ticketTabsEnabled','disableNextTicket','groupingEnabled','firstLineWorkloadEnabled','mailUnreadEnabled','actionsUndoEnabled','loadingEnabled','snippetPickerEnabled'])value[key]=document.getElementById(key).checked;
     value.snippetPickerTrigger=document.getElementById('snippetPickerTrigger').value;
     for(const key of ['loadingDismissSeconds','loadingShowAfterSeconds'])value[key]=document.getElementById(key).valueAsNumber;
     return value;
